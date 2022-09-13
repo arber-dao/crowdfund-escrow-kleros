@@ -230,11 +230,16 @@ abstract contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     _milestone.amountClaimable = getMilestoneAmountClaimable(_transactionId, _milestoneId);
 
     // bitwise shift. this allows us to create a unique id for the evidence group.
-    // this should be safe since transactionId will never exceed 2^128 this can be decoded by:
+    // this should be safe since transactionId and milestoneId will never exceed 2^128 this can be decoded by:
     // _transactionId = uint128(_evidenceGroupId >> 128);  _milestoneId = uint128(_evidenceGroupId);
     uint256 _evidenceGroupId = (_transactionId << 128) + _milestoneId;
 
-    emit Evidence(arbitrator, _evidenceGroupId, msg.sender, _evidenceUri);
+    emit Evidence(
+      arbitrator,
+      _evidenceGroupId,
+      msg.sender, // What do i put for the party? funders can be many different addresses
+      _evidenceUri
+    );
   }
 
   /// @notice See {IFundMeCore}

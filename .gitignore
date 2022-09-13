@@ -24,4 +24,7 @@
 gas-report.txt
 /artifacts/
 /cache/
-/deployments
+/deployments/
+coverage
+coverage.json
+/typechain-types/
