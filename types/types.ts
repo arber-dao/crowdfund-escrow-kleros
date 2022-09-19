@@ -1,6 +1,6 @@
 export enum ArbitrableStatus {
-  NoDispute,
-  WaitingSender,
+  Created,
+  Claiming,
   WaitingReceiver,
   DisputeCreated,
   Resolved,

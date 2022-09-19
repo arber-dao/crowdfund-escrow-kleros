@@ -17,7 +17,9 @@ import {
   ALLOWED_NUMBER_OF_MILESTONES,
   APPEAL_DURATION,
   ARBITRATION_FEE,
+  ARBITRATOR_EXTRA_DATA,
   CREATE_TRANSACTION_FEE,
+  RECEIVER_WITHDRAW_TIMEOUT,
   ZERO_ADDRESS,
 } from "../../utils/constants"
 
@@ -59,9 +61,16 @@ import {
           await expect(
             fundMeContract
               .connect(receiver)
-              .createTransaction(milestoneAmountUnlockable, erc20Contract.address, metaEvidence, {
-                value: CREATE_TRANSACTION_FEE.sub(ethers.utils.parseEther("0.0001")),
-              })
+              .createTransaction(
+                milestoneAmountUnlockable,
+                RECEIVER_WITHDRAW_TIMEOUT,
+                ARBITRATOR_EXTRA_DATA,
+                erc20Contract.address,
+                metaEvidence,
+                {
+                  value: CREATE_TRANSACTION_FEE.sub(ethers.utils.parseEther("0.0001")),
+                }
+              )
           ).to.be.revertedWith("FundMe__PaymentTooSmall")
         })
 
@@ -82,6 +91,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockableRevertTooManyMilestonesInitilized,
+                RECEIVER_WITHDRAW_TIMEOUT,
+                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidence,
                 {
@@ -104,6 +115,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockableRevertPercentageNot100,
+                RECEIVER_WITHDRAW_TIMEOUT,
+                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidence,
                 {
@@ -119,6 +132,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockable,
+                RECEIVER_WITHDRAW_TIMEOUT,
+                ARBITRATOR_EXTRA_DATA,
                 nonCompliantErc20Mock.address,
                 metaEvidence,
                 {
@@ -138,6 +153,8 @@ import {
                 .connect(receiver)
                 .createTransaction(
                   milestoneAmountUnlockable,
+                  RECEIVER_WITHDRAW_TIMEOUT,
+                  ARBITRATOR_EXTRA_DATA,
                   erc20Contract.address,
                   metaEvidence,
                   {
@@ -152,13 +169,12 @@ import {
 
             const transaction = await fundMeContract.getTransaction(mainTransactionId)
 
+            assert(transaction.receiver == receiver.address, "transaction receiver address is not correct")
+            assert(transaction.totalFunded.toNumber() == 0, "transaction amount does not equal the amount sent")
             assert(
-              transaction.receiver == receiver.address,
-              "transaction receiver address is not correct"
-            )
-            assert(
-              transaction.totalFunded.toNumber() == 0,
-              "transaction amount does not equal the amount sent"
+              transaction.arbitratorExtraData == ARBITRATOR_EXTRA_DATA,
+              "transaction arbitrator data sent with transaction" +
+                " does not equal transaction arbitrator data fetched"
             )
             assert(
               transaction.crowdfundToken == erc20Contract.address,
@@ -168,8 +184,8 @@ import {
             // check all milestones for the transaction are properly initilized
             for (let idx in transaction.milestones) {
               const {
-                amountUnlockable,
-                amountClaimed,
+                amountUnlockablePercentage,
+                amountClaimable,
                 disputeFeeReceiver,
                 disputeFeeFunders,
                 disputeId,
@@ -178,21 +194,18 @@ import {
               } = await fundMeContract.getTransactionMilestone(mainTransactionId, idx)
 
               assert(
-                amountUnlockable.toString() == milestoneAmountUnlockable[idx].toString(),
-                `amountUnlockable for milestoneId ${idx} does not match expected. Expected: ${milestoneAmountUnlockable[idx]}. Actual: ${amountUnlockable}`
+                amountUnlockablePercentage.toString() == milestoneAmountUnlockable[idx].toString(),
+                `amountUnlockable for milestoneId ${idx} does not match expected. Expected: ${milestoneAmountUnlockable[idx]}. Actual: ${amountUnlockablePercentage}`
               )
-              assert(amountClaimed.toNumber() == 0, "amountClaimed is not initilized to 0")
-              assert(
-                disputeFeeReceiver.toNumber() == 0,
-                "disputeFeeReceiver is not initilized to 0"
-              )
+              assert(amountClaimable.toNumber() == 0, "amountClaimable is not initilized to 0")
+              assert(disputeFeeReceiver.toNumber() == 0, "disputeFeeReceiver is not initilized to 0")
               assert(disputeFeeFunders.toNumber() == 0, "disputeFeeFunders is not initilized to 0")
               assert(disputeId.toNumber() == 0, "disputeId is not initilized to 0")
               assert(
                 disputePayerForFunders == ZERO_ADDRESS,
                 "disputePayerForFunders is not initilized to the zero address"
               )
-              assert(status == ArbitrableStatus.NoDispute, "status is not initilized to NoDispute")
+              assert(status == ArbitrableStatus.Created, "status is not initilized to Created")
             }
           }
         )
@@ -209,18 +222,23 @@ import {
           ]
           const createTransactionTx = await fundMeContract
             .connect(receiver)
-            .createTransaction(milestoneAmountUnlockable, erc20Contract.address, metaEvidence, {
-              value: CREATE_TRANSACTION_FEE,
-            })
+            .createTransaction(
+              milestoneAmountUnlockable,
+              RECEIVER_WITHDRAW_TIMEOUT,
+              ARBITRATOR_EXTRA_DATA,
+              erc20Contract.address,
+              metaEvidence,
+              {
+                value: CREATE_TRANSACTION_FEE,
+              }
+            )
 
           await createTransactionTx.wait()
         })
 
         it("funding a transaction without approving the FundMe contract should revert", async () => {
           await expect(
-            fundMeContract
-              .connect(funder1)
-              .fundTransaction(mainTransactionId, funder1ApproveFundMeContractAllowance)
+            fundMeContract.connect(funder1).fundTransaction(mainTransactionId, funder1ApproveFundMeContractAllowance)
           ).to.be.revertedWith("ERC20: insufficient allowance")
         })
 
@@ -247,47 +265,54 @@ import {
                 .increaseAllowance(fundMeContract.address, funder1ApproveFundMeContractAllowance)
             )
               .to.emit(erc20Contract, "Approval")
-              .withArgs(
-                funder1.address,
-                fundMeContract.address,
-                funder1ApproveFundMeContractAllowance
-              )
+              .withArgs(funder1.address, fundMeContract.address, funder1ApproveFundMeContractAllowance)
 
             await expect(
-              fundMeContract
-                .connect(funder1)
-                .fundTransaction(mainTransactionId, funder1ApproveFundMeContractAllowance)
+              fundMeContract.connect(funder1).fundTransaction(mainTransactionId, funder1ApproveFundMeContractAllowance)
             )
               .to.emit(erc20Contract, "Transfer")
-              .withArgs(
-                funder1.address,
-                fundMeContract.address,
-                funder1ApproveFundMeContractAllowance
-              )
+              .withArgs(funder1.address, fundMeContract.address, funder1ApproveFundMeContractAllowance)
               .to.emit(fundMeContract, "FundTransaction")
-              .withArgs(mainTransactionId, funder1ApproveFundMeContractAllowance)
+              .withArgs(mainTransactionId, funder1.address, funder1ApproveFundMeContractAllowance)
 
             const transaction = await fundMeContract.getTransaction(mainTransactionId)
             assert(
-              transaction.totalFunded.toString() ==
-                funder1ApproveFundMeContractAllowance.toString(),
+              transaction.totalFunded.toString() == funder1ApproveFundMeContractAllowance.toString(),
               `total funded value not expected. Expected: ${funder1ApproveFundMeContractAllowance}.` +
                 ` Actual: ${transaction.totalFunded}`
             )
 
-            const transactionAddressAmountFunded =
-              await fundMeContract.transactionAddressAmountFunded(
-                mainTransactionId,
-                funder1.address
-              )
+            const transactionAddressAmountFunded = await fundMeContract.transactionAddressAmountFunded(
+              mainTransactionId,
+              funder1.address
+            )
             assert(
-              transactionAddressAmountFunded.toString() ==
-                funder1ApproveFundMeContractAllowance.toString(),
+              transactionAddressAmountFunded.toString() == funder1ApproveFundMeContractAllowance.toString(),
               `amount funded for transaction ID ${mainTransactionId} for address ${funder1.address}` +
                 `not expected. Expected: ${funder1ApproveFundMeContractAllowance}.` +
                 `Actual: ${transactionAddressAmountFunded}`
             )
           }
         )
+      })
+
+      describe("requestClaimMilestone()", async () => {
+        beforeEach(async () => {})
+
+        it("", async () => {})
+
+        it("", async () => {})
+
+        it("", async () => {})
+      })
+
+      describe("claimMilestone()", async () => {
+        beforeEach(async () => {})
+
+        it("", async () => {})
+
+        it("", async () => {})
+
+        it("", async () => {})
       })
     })

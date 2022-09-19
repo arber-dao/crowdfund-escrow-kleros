@@ -10,10 +10,12 @@ export const ARBITRATION_FEE = ethers.utils.parseEther("0.1")
 export const APPEAL_FEE = ethers.utils.parseEther("0.1")
 
 /********************************************/
-/***** Multiple Arbitrable Transaction ******/
+/***** FundMe ******/
 /********************************************/
 
 export const CREATE_TRANSACTION_FEE = ethers.utils.parseEther("0.1")
+export const APPEAL_FEE_TIMEOUT = 10000
+export const RECEIVER_WITHDRAW_TIMEOUT = 10000
 
 // Arbitrator extra data. ID of the dispute's subcourt (first 32 bytes), the minimum number of jurors
 // required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes)

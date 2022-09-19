@@ -8,6 +8,7 @@ import {
   ARBITRATOR_EXTRA_DATA,
   CREATE_TRANSACTION_COST,
   ALLOWED_NUMBER_OF_MILESTONES,
+  APPEAL_FEE_TIMEOUT,
 } from "../utils/constants"
 
 const deployArbitrable: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
@@ -20,12 +21,7 @@ const deployArbitrable: DeployFunction = async (hre: HardhatRuntimeEnvironment) 
   log("----------------------------------------------------")
   const arbitratorAddress = arbitratorContract.address
 
-  let args: any[] = [
-    arbitratorAddress,
-    ARBITRATOR_EXTRA_DATA,
-    ALLOWED_NUMBER_OF_MILESTONES,
-    CREATE_TRANSACTION_COST,
-  ]
+  let args: any[] = [arbitratorAddress, ALLOWED_NUMBER_OF_MILESTONES, CREATE_TRANSACTION_COST, APPEAL_FEE_TIMEOUT]
   const fundMeContract = await deploy("FundMeCore", {
     from: deployer,
     args: args,
