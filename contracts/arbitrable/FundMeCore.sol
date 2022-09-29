@@ -262,7 +262,6 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // depend on the remaining milestones amountUnlockable. Therefore we need to adjust the % claimable such that the REMAINING
     // milestones amountUnlockablePercentage total to 100% (1 ether), then we can calculate the amountClaimable
     _milestone.amountClaimable = getMilestoneAmountClaimable(_transactionId, _milestoneId);
-
     // bitwise shift. this allows us to create a unique id for the evidence group.
     // this should be safe since transactionId and milestoneId will never exceed 2^128 this can be decoded if needed by:
     // _transactionId = uint128(_evidenceGroupId >> 128);  _milestoneId = uint128(_evidenceGroupId);
@@ -305,6 +304,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     _transaction.nextClaimableMilestoneCounter += 1;
     _milestone.status = Status.Resolved;
     balanceCrowdFundToken[_transaction.receiver][address(_transaction.crowdfundToken)] = _milestone.amountClaimable;
+    _transaction.remainingFunds -= _milestone.amountClaimable;
 
     emit MilestoneResolved(_transactionId, _milestoneId);
   }
@@ -342,7 +342,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   function appeal(uint32 _transactionId, uint16 _milestoneId) public payable override(IFundMeCore) {}
 
   /// @notice See {IFundMeCore}
-  function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
+  function supportsInterface(bytes4 interfaceId) public view override(ERC165) returns (bool) {
     return interfaceId == type(IFundMeCore).interfaceId || super.supportsInterface(interfaceId);
   }
 
@@ -366,10 +366,9 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   {
     Transaction memory _transaction = transactions[_transactionId];
 
-    uint64[] memory remainingMilestonesAmountUnlockable;
-
+    uint64[] memory remainingMilestonesAmountUnlockable = new uint64[](_transaction.milestones.length - _milestoneId);
     // put the remaining milestones amountUnlockablePercentage into an array
-    for (uint16 i = 0; i < _transaction.milestones.length - _milestoneId; i++) {
+    for (uint16 i = 0; i < remainingMilestonesAmountUnlockable.length; i++) {
       remainingMilestonesAmountUnlockable[i] = _transaction.milestones[i + _milestoneId].amountUnlockablePercentage;
     }
 
@@ -377,12 +376,14 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // amountUnlockablePercentage by the sum of all remaining amountUnlockablePercentage, and recalculating the sum of all those
     // values will yield a total of 100% (1 ether). since we only require percentage claimable for the given milestone, we only
     // calculate percentage claimable for the first index of the remaining milestones amountUnlockablePercentage
-    uint64 percentageClaimable = remainingMilestonesAmountUnlockable[0] / remainingMilestonesAmountUnlockable.getSum();
-
+    uint256 percentageClaimable = (uint256(remainingMilestonesAmountUnlockable[0]) * 1 ether) /
+      remainingMilestonesAmountUnlockable.getSum();
+    console.log(percentageClaimable);
     // now we can calculate the amountClaimable of the erc20 crowdFundToken. since percentageClaimable is denominated by 1 ether
     // we must divide by 1 ether in order to to get an actual percentage as a fraction (if percentageClaimable for a given
     // milestone was 0.2 ether the amount claimable should be remainingFunds * 0.2, NOT remainingFunds * 0.2 ether)
     amountClaimable = (_transaction.remainingFunds * percentageClaimable) / 1 ether;
+    console.log(amountClaimable);
   }
 
   /** @dev Execute a ruling of a dispute.
