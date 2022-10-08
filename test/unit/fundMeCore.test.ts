@@ -6,7 +6,7 @@ import { BigNumber, ContractReceipt, ContractTransaction } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 import { ArbitrableStatus, ArbitrableParty } from "../../types/types"
 import { moveTime } from "../../utils/move-network"
-import { ensureBalanceAfterTransaction, getEvidenceGroupId } from "../testHelper.test"
+import { ensureBalanceAfterTransaction, getEvidenceGroupId } from "../testHelper"
 import {
   ALLOWED_NUMBER_OF_MILESTONES,
   APPEAL_DURATION,
@@ -19,7 +19,7 @@ import {
 
 !developmentChains.includes(network.name)
   ? describe.skip
-  : describe("Fund Me Contract Test Suite", async function () {
+  : describe("Fund Me Contract Unit Test Suite", async function () {
       let centralizedArbitratorContract: CentralizedArbitrator,
         fundMeContract: FundMeCore,
         erc20Contract: ERC20Mock,
@@ -374,35 +374,97 @@ import {
           ).to.be.revertedWith("FundMe__OnlyTransactionReceiver")
         })
 
-        it("requesting to claim a milestone with status that is not set to created should revert", async () => {})
-
-        it(
-          "requesting to claim a milestone should set milestone status to Claiming, set the milestone amountClaimable, " +
-            "and emit relevent events",
-          async () => {
-            await expect(
-              fundMeContract.connect(receiver).requestClaimMilestone(mainTransactionId, mainMilestoneId, evidenceUri)
+        it("requesting to claim a milestone with status that is not set to Created should revert", async () => {
+          await expect(
+            fundMeContract.connect(receiver).requestClaimMilestone(mainTransactionId, mainMilestoneId, evidenceUri)
+          )
+            .to.emit(fundMeContract, "MilestoneProposed")
+            .withArgs(mainTransactionId, mainMilestoneId)
+            .to.emit(fundMeContract, "Evidence")
+            .withArgs(
+              centralizedArbitratorContract.address,
+              getEvidenceGroupId(mainTransactionId, mainMilestoneId).toBigInt(),
+              receiver.address,
+              evidenceUri
             )
-              .to.emit(fundMeContract, "MilestoneProposed")
-              .withArgs(mainTransactionId, mainMilestoneId)
-              .to.emit(fundMeContract, "Evidence")
-              .withArgs(
-                centralizedArbitratorContract.address,
-                getEvidenceGroupId(mainTransactionId, mainMilestoneId),
-                receiver.address,
-                evidenceUri
-              )
-          }
-        )
+          await expect(
+            fundMeContract.connect(receiver).requestClaimMilestone(mainTransactionId, mainMilestoneId, evidenceUri)
+          ).to.be.revertedWith("FundMe__MilestoneStatusNotCreated")
+        })
       })
 
       describe("claimMilestone()", async () => {
-        beforeEach(async () => {})
+        let funders: SignerWithAddress[]
 
-        it("", async () => {})
+        const funderApproveFundMeContractAllowance = [
+          ethers.utils.parseEther("10"), // funder 1 allowance
+          ethers.utils.parseEther("20"), // funder 2 allowance
+          ethers.utils.parseEther("30"), // funder 3 allowance
+        ]
 
-        it("", async () => {})
+        beforeEach(async () => {
+          funders = [funder1, funder2, funder3]
 
-        it("", async () => {})
+          const milestoneAmountUnlockable = [
+            ethers.utils.parseEther("0.2"),
+            ethers.utils.parseEther("0.4"),
+            ethers.utils.parseEther("0.4"),
+          ]
+          const createTransactionTx = await fundMeContract
+            .connect(receiver)
+            .createTransaction(
+              milestoneAmountUnlockable,
+              RECEIVER_WITHDRAW_TIMEOUT,
+              ARBITRATOR_EXTRA_DATA,
+              erc20Contract.address,
+              metaEvidenceUri,
+              {
+                value: CREATE_TRANSACTION_FEE,
+              }
+            )
+
+          await createTransactionTx.wait()
+
+          for (const i in funders) {
+            const increaseAllowanceTx = await erc20Contract
+              .connect(funders[i])
+              .increaseAllowance(fundMeContract.address, funderApproveFundMeContractAllowance[i])
+            await increaseAllowanceTx.wait()
+
+            const functionTransactionTx = await fundMeContract
+              .connect(funders[i])
+              .fundTransaction(mainTransactionId, funderApproveFundMeContractAllowance[i])
+            await functionTransactionTx.wait()
+          }
+
+          const requestClaimMilestoneTx = await fundMeContract
+            .connect(receiver)
+            .requestClaimMilestone(mainTransactionId, mainMilestoneId, evidenceUri)
+          await requestClaimMilestoneTx.wait()
+        })
+
+        it("claiming a milestone without the required time passing should revert", async () => {
+          await expect(
+            fundMeContract.connect(receiver).claimMilestone(mainTransactionId, mainMilestoneId)
+          ).to.be.revertedWith("FundMe__RequiredTimeoutNotPassed")
+          moveTime(RECEIVER_WITHDRAW_TIMEOUT - 2)
+          await expect(
+            fundMeContract.connect(receiver).claimMilestone(mainTransactionId, mainMilestoneId)
+          ).to.be.revertedWith("FundMe__RequiredTimeoutNotPassed")
+          moveTime(2)
+          await expect(fundMeContract.connect(receiver).claimMilestone(mainTransactionId, mainMilestoneId))
+            .to.emit(fundMeContract, "MilestoneResolved")
+            .withArgs(mainTransactionId, mainMilestoneId)
+        })
+
+        it("claiming a milestone with status not set to Claiming should revert", async () => {
+          moveTime(RECEIVER_WITHDRAW_TIMEOUT)
+          await expect(fundMeContract.connect(receiver).claimMilestone(mainTransactionId, mainMilestoneId))
+            .to.emit(fundMeContract, "MilestoneResolved")
+            .withArgs(mainTransactionId, mainMilestoneId)
+          await expect(
+            fundMeContract.connect(receiver).claimMilestone(mainTransactionId, mainMilestoneId + 1)
+          ).to.be.revertedWith("FundMe__MilestoneStatusNotClaiming")
+        })
       })
     })

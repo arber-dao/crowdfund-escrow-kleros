@@ -211,9 +211,6 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   }
 
   /// @notice See {IFundMeCore}
-  function rule(uint256 _disputeId, uint256 _ruling) external override(IFundMeCore) {}
-
-  /// @notice See {IFundMeCore}
   function fundTransaction(uint32 _transactionId, uint256 _amountFunded)
     public
     override(IFundMeCore)
@@ -265,7 +262,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // bitwise shift. this allows us to create a unique id for the evidence group.
     // this should be safe since transactionId and milestoneId will never exceed 2^128 this can be decoded if needed by:
     // _transactionId = uint128(_evidenceGroupId >> 128);  _milestoneId = uint128(_evidenceGroupId);
-    uint256 _evidenceGroupId = (_transactionId << 128) + _milestoneId;
+    uint256 _evidenceGroupId = (uint256(_transactionId) << 128) + uint256(_milestoneId);
 
     emit MilestoneProposed(_transactionId, _milestoneId);
     emit Evidence(
@@ -308,6 +305,9 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     emit MilestoneResolved(_transactionId, _milestoneId);
   }
+
+  /// @notice See {IFundMeCore}
+  function rule(uint256 _disputeId, uint256 _ruling) external override(IFundMeCore) {}
 
   /// @notice See {IFundMeCore}
   function payDisputeFeeByFunders(uint32 _transactionId, uint16 _milestoneId) public payable override(IFundMeCore) {
@@ -378,12 +378,10 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // calculate percentage claimable for the first index of the remaining milestones amountUnlockablePercentage
     uint256 percentageClaimable = (uint256(remainingMilestonesAmountUnlockable[0]) * 1 ether) /
       remainingMilestonesAmountUnlockable.getSum();
-    console.log(percentageClaimable);
     // now we can calculate the amountClaimable of the erc20 crowdFundToken. since percentageClaimable is denominated by 1 ether
     // we must divide by 1 ether in order to to get an actual percentage as a fraction (if percentageClaimable for a given
     // milestone was 0.2 ether the amount claimable should be remainingFunds * 0.2, NOT remainingFunds * 0.2 ether)
     amountClaimable = (_transaction.remainingFunds * percentageClaimable) / 1 ether;
-    console.log(amountClaimable);
   }
 
   /** @dev Execute a ruling of a dispute.

@@ -31,22 +31,13 @@ export const ensureBalanceAfterTransaction = async (
  * @notice Does bitwise shift of transactionID and milestoneID to get evidenceGroupId for FundMeContract
  * @param transactionId ID of the transaction
  * @param milestoneId ID of the milestone
- * @returns evidenceGroupId for given transactionID and milestoneID
+ * @returns evidenceGroupId for given transactionID and milestoneID as a BigNumber
  */
-export const getEvidenceGroupId = (transactionId: number, milestoneId: number): String => {
-  return ethers.utils.hexConcat([
-    ethers.utils.hexZeroPad(ethers.utils.hexlify(transactionId), 16),
-    ethers.utils.hexZeroPad(ethers.utils.hexlify(milestoneId), 16),
-  ])
+export const getEvidenceGroupId = (transactionId: number, milestoneId: number): BigNumber => {
+  return ethers.BigNumber.from(
+    ethers.utils.hexConcat([
+      ethers.utils.hexZeroPad(ethers.utils.hexlify(transactionId), 16),
+      ethers.utils.hexZeroPad(ethers.utils.hexlify(milestoneId), 16),
+    ])
+  )
 }
-
-/**
- * @notice Calculates the amount claimable for a given milestone
- * @param milestonesAmountUnlockable an array of the amount unlockable for each milestone
- * @param milestoneId ID of the milestone
- * @returns the amount claimable for the given milestone
- */
-export const getMilestoneAmountClaimable = (
-  milestonesAmountUnlockable: BigNumber[],
-  milestoneId: number
-): BigNumber => {}
