@@ -351,6 +351,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     }
 
     _transaction.paidDisputeFees += uint128(msg.value);
+    uint256 _refundAmount = 0;
 
     if (uint256(_transaction.paidDisputeFees) < arbitrationCost) {
       // dispute requires more funds, emit event that indicates this and exit the function
@@ -365,23 +366,22 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       return;
     } else if (uint256(_transaction.paidDisputeFees) > arbitrationCost) {
       // dispute fee was overpaid, adjust account balance, and set disputeFee to the arbitration cost
-      uint256 _refundAmount = uint256(_transaction.paidDisputeFees) - arbitrationCost;
+      _refundAmount = uint256(_transaction.paidDisputeFees) - arbitrationCost;
 
       accountBalance[msg.sender][address(0)] += _refundAmount;
       _transaction.paidDisputeFees = uint128(arbitrationCost);
-
-      emit DisputeContribution({
-        _transactionId: _transactionId,
-        _milestoneId: _milestoneId,
-        _contributor: msg.sender,
-        _amountContributed: uint128(msg.value - _refundAmount),
-        _amountRequired: _transaction.paidDisputeFees,
-        _amountPaid: _transaction.paidDisputeFees
-      });
       emit BalanceUpdate(msg.sender, address(0), accountBalance[msg.sender][address(0)]);
     }
 
-    // the following will only execute only one time, and will only execute when the dispute fee has been fully paid
+    // the following will execute only one time, and will only execute when the dispute fee has been fully paid
+    emit DisputeContribution({
+      _transactionId: _transactionId,
+      _milestoneId: _milestoneId,
+      _contributor: msg.sender,
+      _amountContributed: uint128(msg.value - _refundAmount),
+      _amountRequired: _transaction.paidDisputeFees,
+      _amountPaid: _transaction.paidDisputeFees
+    });
 
     uint32 localDisputeId = localDisputeIdCounter;
     disputes[localDisputeId] = DisputeStruct({
@@ -436,9 +436,12 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     Transaction storage _transaction = transactions[_transactionId];
 
     if (!isFunderRefunded(_transactionId)) {
-      uint256 refundAmount = transactionFunderDetails[_transactionId][msg.sender].amountFunded;
-      accountBalance[msg.sender][address(_transaction.crowdfundToken)] += refundAmount;
+      uint256 _refundAmount = transactionFunderDetails[_transactionId][msg.sender].amountFunded;
+      accountBalance[msg.sender][address(_transaction.crowdfundToken)] += _refundAmount;
       transactionFunderDetails[_transactionId][msg.sender].amountFunded = 0;
+      transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId = _transaction.disputeIds[
+        _transaction.disputeIds.length - 1
+      ];
     } else {
       revert FundMe__NoRefundableFunds();
     }
