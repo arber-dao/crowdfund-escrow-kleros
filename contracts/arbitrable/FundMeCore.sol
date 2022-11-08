@@ -33,27 +33,26 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   Constants public constants;
 
   /**** Amount Payable ***************/
-  // balance of native token to be paid from this contract.
-  // account address --> returns native token balance
-  mapping(address => uint256) public balanceNativeToken;
 
-  // balance of an erc20 token to be paid from this contract. note that in order to keep track of the tokens to be paid to an address, an indexer like
+  // balance of an erc20 token to be paid from this contract. NOTE that in order to keep track of the tokens to be paid to an address, an indexer like
   // thegraph will be very useful for this
   // account address => erc20 contract address --> returns balance of erc20 token to be paid to account address
-  mapping(address => mapping(address => uint256)) public balanceCrowdFundToken;
+  // NOTE that if the address for the second mapping (erc20 contract address) is the 0 address, that indicates the native token balance (ETH)
+  mapping(address => mapping(address => uint256)) public accountBalance;
 
   /**** Transaction State ***************/
   uint32 public transactionIdCounter;
   mapping(uint32 => Transaction) private transactions; // mapping of all of the transactions
 
-  // The total amount that has been funded to a transaction for a given address, denominated in the specified erc20 token
-  // transactionId => funders address --> returns amount funded towards transaction[id]
-  mapping(uint32 => mapping(address => uint256)) public transactionAddressAmountFunded;
+  // transactionId => funders address --> returns TransactionFunderDetails
+  mapping(uint32 => mapping(address => TransactionFunderDetails)) public transactionFunderDetails;
+
+  /**** Dispute State ******************/
+  uint32 public localDisputeIdCounter;
+  mapping(uint32 => DisputeStruct) public disputes;
+  mapping(uint256 => uint32) public externalDisputeIdToLocalDisputeId; // Maps external (arbitrator side) dispute IDs to local dispute IDs.
 
   /**** Milestone State ****************/
-  // The total amount that has been funded to a milestone dispute for a given address, denominated in ETH
-  // transactionId => milestoneId => dispute funders address --> returns amount funded dispute for milestone transaction[transactionId].milestones[milestoneId]
-  mapping(uint32 => mapping(uint16 => mapping(address => uint256))) private milestoneAddressDisputeAmountFunded;
 
   /** @dev Constructor. Choose the arbitrator.
    *  @param _arbitrator The arbitrator of the contract.
@@ -68,10 +67,28 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     uint64 _appealFeeTimeout
   ) {
     transactionIdCounter = 0;
+    localDisputeIdCounter = 0;
     constants.arbitrator = IArbitrator(_arbitrator);
     constants.allowedNumberOfMilestones = _allowedNumberOfMilestones;
     constants.createTransactionCost = _createTransactionCost;
     constants.appealFeeTimeout = _appealFeeTimeout;
+
+    // placeholder transaction to fill the 0 spot
+    createTransaction(
+      new uint64[](1 ether),
+      new bytes[](0x0),
+      type(uint64).max,
+      0x000000000000000000000000000000000000dEaD,
+      "dEaD"
+    );
+    // placeholder dispute to fill the 0 spot
+    disputes[localDisputeIdCounter] = DisputeStruct({
+      transactionId: 0,
+      milestoneId: 0,
+      isRuled: false,
+      ruling: DisputeChoices(0)
+    });
+    localDisputeIdCounter += 1;
   }
 
   /**************************************/
@@ -83,10 +100,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
    */
   modifier onlyTransactionReceiver(uint32 _transactionId) {
     if (transactions[_transactionId].receiver != msg.sender) {
-      revert FundMe__OnlyTransactionReceiver({
-        requiredReceiver: transactions[_transactionId].receiver,
-        sender: msg.sender
-      });
+      revert FundMe__OnlyTransactionReceiver({receiver: transactions[_transactionId].receiver});
     }
     _;
   }
@@ -98,22 +112,6 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // receiver address cannot be zero address, therefore the transaction does not exist if the receiver address is the 0 address
     if (transactions[_transactionId].receiver == address(0)) {
       revert FundMe__TransactionNotFound(_transactionId);
-    }
-    _;
-  }
-
-  /** @notice A check to make sure someone doesnt try to call claimMilestone() or requestClaimMilestone() on a milestone that
-   *          that is not currently in progress
-   *  @param _transactionId ID of the transaction.
-   *  @param _milestoneId ID of the milestone.
-   */
-  modifier milestoneIdNotClaimable(uint32 _transactionId, uint16 _milestoneId) {
-    Transaction memory _transaction = transactions[_transactionId];
-    if (_transaction.nextClaimableMilestoneCounter != _milestoneId) {
-      revert FundMe__MilestoneIdNotClaimable({
-        milestoneIdRequired: _transaction.nextClaimableMilestoneCounter,
-        milestoneIdGiven: _milestoneId
-      });
     }
     _;
   }
@@ -152,14 +150,18 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   }
 
   /**************************************/
+  /**** Only Funders ********************/
+  /**************************************/
+
+  /**************************************/
   /**** Core Transactions ***************/
   /**************************************/
 
   /// @notice See {IFundMeCore}
   function createTransaction(
     uint64[] memory _milestoneAmountUnlockablePercentage,
+    bytes[] memory _milestoneArbitratorExtraData,
     uint64 _receiverWithdrawTimeout,
-    bytes memory _arbitratorExtraData,
     address _crowdfundToken,
     string memory _metaEvidenceUri
   ) public payable override(IFundMeCore) returns (uint32 transactionId) {
@@ -167,11 +169,18 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       revert FundMe__PaymentTooSmall({amountRequired: constants.createTransactionCost, amountSent: uint128(msg.value)});
     }
     // milestone length must be less than the allowed number of milestones
-    if (_milestoneAmountUnlockablePercentage.length > constants.allowedNumberOfMilestones) {
-      revert FundMe__TooManyMilestonesInitilized();
+    if (
+      _milestoneAmountUnlockablePercentage.length > constants.allowedNumberOfMilestones &&
+      _milestoneAmountUnlockablePercentage.length > 0
+    ) {
+      revert FundMe__IncorrectNumberOfMilestoneInitilized({min: 1, max: constants.allowedNumberOfMilestones});
     }
     if (_milestoneAmountUnlockablePercentage.getSum() != 1 ether) {
       revert FundMe__MilestoneAmountUnlockablePercentageNot1();
+    }
+
+    if (_milestoneAmountUnlockablePercentage.length != _milestoneArbitratorExtraData.length) {
+      revert FundMe__MilestoneDataMismatch();
     }
 
     // check if the crowdfundToken is an erc20 compliant contract. NOTE that most erc20 contracts will not
@@ -185,20 +194,15 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     _transaction.receiver = msg.sender;
     _transaction.timing.receiverWithdrawTimeout = _receiverWithdrawTimeout;
-    _transaction.arbitratorExtraData = _arbitratorExtraData;
     _transaction.crowdfundToken = IERC20(_crowdfundToken);
-    _transaction.voteToken = IERC20(_crowdfundToken); // TODO UPDATE WITH A VIABLE VOTING TOKEN!
 
     for (uint16 i = 0; i < _milestoneAmountUnlockablePercentage.length; i++) {
       Milestone[] storage _milestones = _transaction.milestones;
       _milestones.push(
         Milestone({
           amountUnlockablePercentage: _milestoneAmountUnlockablePercentage[i],
+          arbitratorExtraData: _milestoneArbitratorExtraData[i],
           amountClaimable: 0,
-          disputeFeeReceiver: 0,
-          disputeFeeFunders: 0,
-          disputeId: 0,
-          disputePayerForFunders: address(0),
           status: Status.Created
         })
       );
@@ -206,7 +210,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     transactionIdCounter++;
 
-    emit MetaEvidence(transactionId, _metaEvidenceUri);
+    emit MetaEvidence(transactionId, _metaEvidenceUri); // transactionId == MetaEvidenceId
     emit TransactionCreated(transactionId, msg.sender, _crowdfundToken);
   }
 
@@ -219,33 +223,31 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   {
     Transaction storage _transaction = transactions[_transactionId];
 
-    bool success = _transaction.crowdfundToken.transferFrom(msg.sender, address(this), _amountFunded);
-
-    if (!success) {
-      revert FundMe__ERC20TransferUnsuccessful(address(_transaction.crowdfundToken));
+    if (!isFunderRefunded(_transactionId)) {
+      revert FundMe__NotRefundedForDispute({
+        latestDisputeId: _transaction.disputeIds[_transaction.disputeIds.length - 1]
+      });
     }
 
-    _transaction.totalFunded += _amountFunded;
-    _transaction.remainingFunds += _amountFunded;
-    transactionAddressAmountFunded[_transactionId][msg.sender] += _amountFunded;
+    _transaction.crowdfundToken.transferFrom(msg.sender, address(this), _amountFunded);
+
+    _transaction.transactionFunds.totalFunded += _amountFunded;
+    _transaction.transactionFunds.remainingFunds += _amountFunded;
+    transactionFunderDetails[_transactionId][msg.sender].amountFunded += _amountFunded;
 
     emit FundTransaction(_transactionId, msg.sender, _amountFunded);
   }
 
   /// @notice See {IFundMeCore} TODO Needs testing
-  function requestClaimMilestone(
-    uint32 _transactionId,
-    uint16 _milestoneId,
-    string memory _evidenceUri
-  )
+  function requestClaimMilestone(uint32 _transactionId, string memory _evidenceUri)
     public
     override(IFundMeCore)
     nonReentrant
     transactionExists(_transactionId)
     onlyTransactionReceiver(_transactionId)
-    milestoneIdNotClaimable(_transactionId, _milestoneId)
   {
     Transaction storage _transaction = transactions[_transactionId];
+    uint16 _milestoneId = _transaction.nextClaimableMilestoneCounter;
     Milestone storage _milestone = _transaction.milestones[_milestoneId];
 
     if (_milestone.status != Status.Created) {
@@ -258,30 +260,26 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // since funders can keep funding a transaction after milestones have been claimed, a milestones amountClaimable should
     // depend on the remaining milestones amountUnlockable. Therefore we need to adjust the % claimable such that the REMAINING
     // milestones amountUnlockablePercentage total to 100% (1 ether), then we can calculate the amountClaimable
-    _milestone.amountClaimable = getMilestoneAmountClaimable(_transactionId, _milestoneId);
-    // bitwise shift. this allows us to create a unique id for the evidence group.
-    // this should be safe since transactionId and milestoneId will never exceed 2^128 this can be decoded if needed by:
-    // _transactionId = uint128(_evidenceGroupId >> 128);  _milestoneId = uint128(_evidenceGroupId);
-    uint256 _evidenceGroupId = (uint256(_transactionId) << 128) + uint256(_milestoneId);
+    _milestone.amountClaimable = getMilestoneAmountClaimable(_transactionId);
 
     emit MilestoneProposed(_transactionId, _milestoneId);
     emit Evidence(
       constants.arbitrator,
-      _evidenceGroupId,
+      getEvidenceGroupId(_transactionId, _milestoneId),
       msg.sender, // What do i put for the party? funders can be many different addresses
       _evidenceUri
     );
   }
 
   /// @notice See {IFundMeCore} TODO Needs testing
-  function claimMilestone(uint32 _transactionId, uint16 _milestoneId)
+  function claimMilestone(uint32 _transactionId)
     public
     override(IFundMeCore)
     nonReentrant
     transactionExists(_transactionId)
-    milestoneIdNotClaimable(_transactionId, _milestoneId)
   {
     Transaction storage _transaction = transactions[_transactionId];
+    uint16 _milestoneId = _transaction.nextClaimableMilestoneCounter;
     Milestone storage _milestone = _transaction.milestones[_milestoneId];
 
     if (_milestone.status != Status.Claiming) {
@@ -300,46 +298,151 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     _transaction.nextClaimableMilestoneCounter += 1;
     _milestone.status = Status.Resolved;
-    balanceCrowdFundToken[_transaction.receiver][address(_transaction.crowdfundToken)] = _milestone.amountClaimable;
-    _transaction.remainingFunds -= _milestone.amountClaimable;
+    accountBalance[_transaction.receiver][address(_transaction.crowdfundToken)] += _milestone.amountClaimable;
+    _transaction.transactionFunds.remainingFunds -= _milestone.amountClaimable;
 
+    emit BalanceUpdate(
+      _transaction.receiver,
+      address(_transaction.crowdfundToken),
+      accountBalance[_transaction.receiver][address(_transaction.crowdfundToken)]
+    );
     emit MilestoneResolved(_transactionId, _milestoneId);
   }
 
   /// @notice See {IFundMeCore}
-  function rule(uint256 _disputeId, uint256 _ruling) external override(IFundMeCore) {}
+  function rule(uint256 _disputeId, uint256 _ruling) external override(IFundMeCore) {
+    if (_ruling > uint256(DisputeChoices.ReceiverWins)) {
+      revert FundMe__InvalidRuling({rulingGiven: _ruling, numberOfChoices: uint256(DisputeChoices.ReceiverWins)});
+    }
 
-  /// @notice See {IFundMeCore}
-  function payDisputeFeeByFunders(uint32 _transactionId, uint16 _milestoneId) public payable override(IFundMeCore) {
-    // Transaction storage transaction = transactions[_transactionId];
-    // uint256 arbitrationCost = constants.arbitrator.arbitrationCost(arbitratorExtraData);
-    // require(
-    //   transaction.status < Status.DisputeCreated,
-    //   "Dispute has already been created or because the transaction has been executed."
-    // );
-    // require(msg.sender == transaction.receiver, "The caller must be the receiver.");
-    // transaction.receiverFee += msg.value;
-    // // Require that the total paid to be at least the arbitration cost.
-    // require(transaction.receiverFee >= arbitrationCost, "The receiver fee must cover arbitration costs.");
-    // transaction.lastInteraction = now;
-    // // The sender still has to pay. This can also happen if he has paid, but arbitrationCost has increased.
-    // if (transaction.senderFee < arbitrationCost) {
-    //   transaction.status = Status.WaitingSender;
-    //   emit HasToPayFee(_transactionID, Party.Sender);
-    // } else {
-    //   // The sender has also paid the fee. We create the dispute.
-    //   raiseDispute(_transactionID, arbitrationCost);
-    // }
+    DisputeChoices ruling = DisputeChoices(_ruling);
+    uint32 disputeId = externalDisputeIdToLocalDisputeId[_disputeId];
+    DisputeStruct storage dispute = disputes[disputeId];
+    Transaction storage _transaction = transactions[dispute.transactionId];
+    Milestone storage _milestone = _transaction.milestones[dispute.milestoneId];
+
+    if (msg.sender != address(constants.arbitrator)) {
+      revert FundMe__OnlyArbitrator({arbitrator: address(constants.arbitrator)});
+    }
+
+    if (dispute.isRuled) {
+      revert FundMe__DisputeAlreadyRuled();
+    }
+
+    if (_milestone.status != Status.DisputeCreated) {
+      revert FundMe__MilestoneStatusNotCreated({
+        transactionId: dispute.transactionId,
+        milestoneId: dispute.milestoneId
+      });
+    }
+
+    executeRuling(dispute, ruling);
+  }
+
+  /// @notice See {IFundMeCore} TODO needs testing!
+  function createDispute(uint32 _transactionId) public payable override(IFundMeCore) transactionExists(_transactionId) {
+    Transaction storage _transaction = transactions[_transactionId];
+    uint16 _milestoneId = _transaction.nextClaimableMilestoneCounter;
+    Milestone storage _milestone = _transaction.milestones[_milestoneId];
+    uint256 arbitrationCost = constants.arbitrator.arbitrationCost(_milestone.arbitratorExtraData);
+
+    if (_milestone.status != Status.Claiming) {
+      revert FundMe__MilestoneStatusNotClaiming(_transactionId, _milestoneId);
+    }
+
+    _transaction.paidDisputeFees += uint128(msg.value);
+
+    if (uint256(_transaction.paidDisputeFees) < arbitrationCost) {
+      // dispute requires more funds, emit event that indicates this and exit the function
+      emit DisputeContribution({
+        _transactionId: _transactionId,
+        _milestoneId: _milestoneId,
+        _contributor: msg.sender,
+        _amountContributed: uint128(msg.value),
+        _amountRequired: uint128(arbitrationCost),
+        _amountPaid: _transaction.paidDisputeFees
+      });
+      return;
+    } else if (uint256(_transaction.paidDisputeFees) > arbitrationCost) {
+      // dispute fee was overpaid, adjust account balance, and set disputeFee to the arbitration cost
+      uint256 _refundAmount = uint256(_transaction.paidDisputeFees) - arbitrationCost;
+
+      accountBalance[msg.sender][address(0)] += _refundAmount;
+      _transaction.paidDisputeFees = uint128(arbitrationCost);
+
+      emit DisputeContribution({
+        _transactionId: _transactionId,
+        _milestoneId: _milestoneId,
+        _contributor: msg.sender,
+        _amountContributed: uint128(msg.value - _refundAmount),
+        _amountRequired: _transaction.paidDisputeFees,
+        _amountPaid: _transaction.paidDisputeFees
+      });
+      emit BalanceUpdate(msg.sender, address(0), accountBalance[msg.sender][address(0)]);
+    }
+
+    // the following will only execute only one time, and will only execute when the dispute fee has been fully paid
+
+    uint32 localDisputeId = localDisputeIdCounter;
+    disputes[localDisputeId] = DisputeStruct({
+      transactionId: _transactionId,
+      milestoneId: _milestoneId,
+      isRuled: false,
+      ruling: DisputeChoices(0)
+    });
+
+    uint256 externalDisputeId = constants.arbitrator.createDispute{value: arbitrationCost}(
+      uint256(DisputeChoices.ReceiverWins), //number of ruling options
+      _milestone.arbitratorExtraData
+    );
+
+    externalDisputeIdToLocalDisputeId[externalDisputeId] = localDisputeId;
+    localDisputeIdCounter += 1;
+    _transaction.disputeIds.push(localDisputeId);
+    _milestone.status = Status.DisputeCreated;
+
+    emit Dispute(
+      constants.arbitrator,
+      externalDisputeId,
+      _transactionId, // transactionId == MetaEvidenceId
+      getEvidenceGroupId(_transactionId, _milestoneId)
+    );
   }
 
   /// @notice See {IFundMeCore}
-  function withdraw(uint32 _transactionId, uint16 _milestoneId) public override(IFundMeCore) {}
+  function withdraw(address tokenAddress) public override(IFundMeCore) nonReentrant {
+    uint256 balance = accountBalance[msg.sender][tokenAddress];
+    if (balance > 0) {
+      if (tokenAddress == address(0)) {
+        (bool success, ) = payable(msg.sender).call{value: balance}("");
+        // revert if transfer was not successful
+        if (!success) {
+          revert FundMe__TransferUnsuccessful();
+        }
+      } else {
+        IERC20(tokenAddress).transfer(msg.sender, balance);
+      }
+
+      // NOTE contracts with modified fallbacks should still be able to use this contract. We dont want to update balance before incase low level
+      // call fails so we modify after the transfer. Still guarded against reentrancy
+      accountBalance[msg.sender][tokenAddress] = 0;
+    } else {
+      revert FundMe__NoWithdrawableFunds();
+    }
+  }
 
   /// @notice See {IFundMeCore}
-  function timeoutByFunders(uint32 _transactionId, uint16 _milestoneId) public override(IFundMeCore) {}
+  function refund(uint32 _transactionId) public nonReentrant {
+    Transaction storage _transaction = transactions[_transactionId];
 
-  /// @notice See {IFundMeCore}
-  function appeal(uint32 _transactionId, uint16 _milestoneId) public payable override(IFundMeCore) {}
+    if (!isFunderRefunded(_transactionId)) {
+      uint256 refundAmount = transactionFunderDetails[_transactionId][msg.sender].amountFunded;
+      accountBalance[msg.sender][address(_transaction.crowdfundToken)] += refundAmount;
+      transactionFunderDetails[_transactionId][msg.sender].amountFunded = 0;
+    } else {
+      revert FundMe__NoRefundableFunds();
+    }
+  }
 
   /// @notice See {IFundMeCore}
   function supportsInterface(bytes4 interfaceId) public view override(ERC165) returns (bool) {
@@ -350,21 +453,39 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   /**** internal functions ****************/
   /**************************************/
 
+  function executeRuling(DisputeStruct storage _dispute, DisputeChoices _ruling) internal {
+    Transaction storage _transaction = transactions[_dispute.transactionId];
+    Milestone storage _milestone = _transaction.milestones[_dispute.milestoneId];
+
+    _dispute.isRuled = true;
+    _dispute.ruling = _ruling;
+    _transaction.paidDisputeFees = 0;
+
+    if (_ruling == DisputeChoices.ReceiverWins) {
+      // maybe have to set timing.lastInteraction to 0 value so claim milestone can be called?
+      _transaction.timing.lastInteraction = 0;
+      _milestone.status = Status.Claiming;
+      claimMilestone(_dispute.transactionId);
+    } else if (_ruling == DisputeChoices.FunderWins) {
+      _transaction.transactionFunds.totalFunded -= _transaction.transactionFunds.remainingFunds;
+      _transaction.transactionFunds.remainingFunds = 0;
+      _milestone.status = Status.Created;
+    } else {
+      // TODO ruling was None, what to do here?
+    }
+  }
+
   /** @notice calculate the amountClaimable based on the REMAINING milestones left to claim and the transaction remainingFunds
    *  @param _transactionId ID of the transaction.
-   *  @param _milestoneId ID of the milestone.
    *  @dev The reason we need to calculate the percentage claimable based on the remaining transactions is because funds
    *  can keep being added to the transaction after a milestone is claimed if funders want to continue supporting it.
    *  if we were to use the original milestone amountUnlockablePercentage to calculate milestone amountClaimable the total
    *  amount withdrawable would always be <= totalFunds deposited.
    *  TODO Needs testing
    */
-  function getMilestoneAmountClaimable(uint32 _transactionId, uint16 _milestoneId)
-    internal
-    view
-    returns (uint256 amountClaimable)
-  {
+  function getMilestoneAmountClaimable(uint32 _transactionId) internal view returns (uint256 amountClaimable) {
     Transaction memory _transaction = transactions[_transactionId];
+    uint16 _milestoneId = _transaction.nextClaimableMilestoneCounter;
 
     uint64[] memory remainingMilestonesAmountUnlockable = new uint64[](_transaction.milestones.length - _milestoneId);
     // put the remaining milestones amountUnlockablePercentage into an array
@@ -381,24 +502,31 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // now we can calculate the amountClaimable of the erc20 crowdFundToken. since percentageClaimable is denominated by 1 ether
     // we must divide by 1 ether in order to to get an actual percentage as a fraction (if percentageClaimable for a given
     // milestone was 0.2 ether the amount claimable should be remainingFunds * 0.2, NOT remainingFunds * 0.2 ether)
-    amountClaimable = (_transaction.remainingFunds * percentageClaimable) / 1 ether;
+    amountClaimable = (_transaction.transactionFunds.remainingFunds * percentageClaimable) / 1 ether;
   }
 
-  /** @dev Execute a ruling of a dispute.
-   *  @param _disputeID ID of the dispute in the Arbitrator contract.
-   *  @param _ruling Ruling given by the arbitrator. Note that 0 is reserved for "Not able/wanting to make a decision".
+  /** @notice check if the funder has been refunded
+   *  @param _transactionId ID of the transaction
+   *  @dev if the latest disputeId the funder has been refunded for is less than the transactions latest disputeId then we know that the funder has not
+   *  been refunded because disputeIds are always incrementing so if theres a new dispute, than its dispute id will always be greater than the disputeId
+   *  the funder has been refunded for IF they have not been refunded for the latest dispute, otherwise they will be equal
+   *  TODO Needs testing
    */
-  function executeRuling(uint256 _disputeID, uint256 _ruling) internal {}
+  function isFunderRefunded(uint32 _transactionId) internal view returns (bool) {
+    Transaction memory _transaction = transactions[_transactionId];
 
-  /** @notice Create a dispute.
-   *  @param _milestoneID The milestone which is disputed.
-   *  @param _arbitrationCost The amount which should be paid to the arbitrator.
-   */
-  function createDispute(
-    uint32 _transactionId,
-    uint16 _milestoneID,
-    uint128 _arbitrationCost
-  ) internal {}
+    // if there has not been any disputes for this transaction, set the latestDisputeId to 0 then this function will automatically return true
+    uint32 latestDisputeId = (_transaction.disputeIds.length != 0)
+      ? _transaction.disputeIds[_transaction.disputeIds.length - 1]
+      : 0;
+    uint32 latestRefundedDisputeId = transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId;
+
+    return
+      (latestRefundedDisputeId < latestDisputeId &&
+        transactionFunderDetails[_transactionId][msg.sender].amountFunded > 0)
+        ? false
+        : true;
+  }
 
   /**************************************/
   /**** public getters ******************/
@@ -413,7 +541,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
   /** @notice fetch a milestone given a transactionId and milestoneId
    *  @param transactionId ID of the transaction.
-   *  @param transactionId ID of the milestone.
+   *  @param milestoneId ID of the milestone.
    *  @dev milestoneId is indexed starting at 0 for every transaction. That is milestoneId's are NOT unique between transactions.
    */
   function getTransactionMilestone(uint32 transactionId, uint16 milestoneId)
@@ -422,5 +550,15 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     returns (Milestone memory _milestone)
   {
     _milestone = transactions[transactionId].milestones[milestoneId];
+  }
+
+  /** @notice get evidenceGroupId for a given transactionId, and milestoneId. this allows us to create a unique id for the evidence group.
+   *  @param transactionId ID of the transaction.
+   *  @param milestoneId ID of the milestone.
+   *  @dev bitwise shift allows us to create unique id. this should be safe since transactionId and milestoneId will never exceed 2^128
+   *       this can be decoded if needed by: _transactionId = uint128(_evidenceGroupId >> 128); _milestoneId = uint128(_evidenceGroupId);
+   */
+  function getEvidenceGroupId(uint32 transactionId, uint16 milestoneId) public pure returns (uint256 evidenceGroupId) {
+    evidenceGroupId = (uint256(transactionId) << 128) + uint256(milestoneId);
   }
 }

@@ -8,17 +8,14 @@ import "./IFundMeCore.sol";
  */
 interface IFundMeErrors {
   /** @notice throw when msg.sender tries to call a function that only the transaction receiver has access to call
-   *  @param requiredReceiver the authorized receiver
-   *  @param sender the caller (msg.sender)
+   *  @param receiver the authorized receiver
    */
-  error FundMe__OnlyTransactionReceiver(address requiredReceiver, address sender);
+  error FundMe__OnlyTransactionReceiver(address receiver);
 
-  /** @notice throw when milestoneId specified is not claimable either because it has already been claimed, 
-              or milestone proceeding it have not been claimed yet
-   *  @param milestoneIdRequired the next milestoneId which should be claimed
-   *  @param milestoneIdGiven the milestoneId attempted to claim
+  /** @notice throw when msg.sender tries to call a function that only the arbitrator has access to call
+   *  @param arbitrator the authorized arbitrator
    */
-  error FundMe__MilestoneIdNotClaimable(uint16 milestoneIdRequired, uint16 milestoneIdGiven);
+  error FundMe__OnlyArbitrator(address arbitrator);
 
   /** @notice throw when payment to a payable function is not enough
    *  @param amountRequired amount required to complete the transaction
@@ -31,10 +28,8 @@ interface IFundMeErrors {
    */
   error FundMe__TransactionNotFound(uint32 transactionId);
 
-  /** @notice throw when erc20 contract transfer is unsuccessful
-   *  @param erc20 the contract address that failed token transfer
-   */
-  error FundMe__ERC20TransferUnsuccessful(address erc20);
+  /// @notice throw when transfer unsuccessful
+  error FundMe__TransferUnsuccessful();
 
   /** @notice throw when a required amount of time has not yet passed. ie. block.timestamp - lastInteraction < requiredTimeout
    *  @param requiredTimeout the amount of time required to pass
@@ -47,8 +42,9 @@ interface IFundMeErrors {
    */
   error FundMe__NonCompliantERC20(address nonCompliantErc20);
 
-  // @notice throw when trying to claim a milestone that has already been claimed
-  error FundMe__MilestoneAlreadyClaimed();
+  /// @notice throw when there is a milestone data mismatch such as length of milestone arrays passed to createTransaction
+  ///         for milestone data are not the same
+  error FundMe__MilestoneDataMismatch();
 
   /** @notice throw when milestone status is not set to Created
    *  @param transactionId ID of the transaction
@@ -62,8 +58,11 @@ interface IFundMeErrors {
    */
   error FundMe__MilestoneStatusNotClaiming(uint32 transactionId, uint16 milestoneId);
 
-  /// @notice throw when receiver tries to initilize more than allowedNumberOfMilestones milestones
-  error FundMe__TooManyMilestonesInitilized();
+  /** @notice throw when receiver tries to initilize incorrect number of milestones
+   *  @param min min number of allowed milestones
+   *  @param max max number of allowed milestones
+   */
+  error FundMe__IncorrectNumberOfMilestoneInitilized(uint16 min, uint16 max);
 
   /// @notice throw when a transactions sum of all milestones amountUnlockable does not total 1 ether
   error FundMe__MilestoneAmountUnlockablePercentageNot1();
@@ -73,4 +72,24 @@ interface IFundMeErrors {
 
   /// @notice throw when the FundMe contract address is not a useable address
   error FundMe__FundMeContractAddressInvalid();
+
+  /// @notice throw when there are no funds to withdraw
+  error FundMe__NoWithdrawableFunds();
+
+  /// @notice throw when there are no funds to refund
+  error FundMe__NoRefundableFunds();
+
+  /** @notice throw when funder attempts to fund a transaction, but has not yet been refunded for a previous dispute on the transaction
+   *  @param latestDisputeId the id for the latest dispute on the transaction
+   */
+  error FundMe__NotRefundedForDispute(uint32 latestDisputeId);
+
+  /** @notice throw when arbitrator gives an invalid ruling
+   *  @param rulingGiven min number of allowed milestones
+   *  @param numberOfChoices max number of allowed milestones
+   */
+  error FundMe__InvalidRuling(uint256 rulingGiven, uint256 numberOfChoices);
+
+  /// @notice throw when the dispute has already been ruled upon
+  error FundMe__DisputeAlreadyRuled();
 }

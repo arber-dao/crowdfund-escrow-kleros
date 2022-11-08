@@ -6,7 +6,7 @@ import { BigNumber, ContractReceipt, ContractTransaction } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 import { ArbitrableStatus, ArbitrableParty } from "../../types/types"
 import { moveTime } from "../../utils/move-network"
-import { ensureBalanceAfterTransaction, getEvidenceGroupId } from "../testHelper"
+import { getEvidenceGroupId } from "../testHelper"
 import {
   ALLOWED_NUMBER_OF_MILESTONES,
   APPEAL_DURATION,
@@ -35,6 +35,12 @@ import {
       // const timeoutPayment = 10 /* seconds */
       const metaEvidenceUri = "This is the Meta Evidence!"
       const evidenceUri = "This is my Evidence!"
+      const milestoneAmountUnlockable = [
+        ethers.utils.parseEther("0.2"),
+        ethers.utils.parseEther("0.4"),
+        ethers.utils.parseEther("0.4"),
+      ]
+      const arbitratorExtraData = Array.from({ length: milestoneAmountUnlockable.length }, () => ARBITRATOR_EXTRA_DATA)
 
       beforeEach(async () => {
         ;[deployer, receiver, funder1, funder2, funder3] = await ethers.getSigners()
@@ -46,12 +52,6 @@ import {
       })
 
       describe("createTransaction()", async () => {
-        const milestoneAmountUnlockable = [
-          ethers.utils.parseEther("0.2"),
-          ethers.utils.parseEther("0.4"),
-          ethers.utils.parseEther("0.4"),
-        ]
-
         it("creating a transaction with too little payment should revert", async () => {
           // should revert if not enough ether is sent to create the transaction
           await expect(
@@ -59,8 +59,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockable,
+                arbitratorExtraData,
                 RECEIVER_WITHDRAW_TIMEOUT,
-                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidenceUri,
                 {
@@ -68,6 +68,27 @@ import {
                 }
               )
           ).to.be.revertedWith("FundMe__PaymentTooSmall")
+        })
+
+        it("creating a transaction with milestone data mismatch should revert", async () => {
+          const dataMismatchArbitratorExtraData = Array.from(
+            { length: milestoneAmountUnlockable.length - 1 },
+            () => ARBITRATOR_EXTRA_DATA
+          )
+          await expect(
+            fundMeContract
+              .connect(receiver)
+              .createTransaction(
+                milestoneAmountUnlockable,
+                dataMismatchArbitratorExtraData,
+                RECEIVER_WITHDRAW_TIMEOUT,
+                erc20Contract.address,
+                metaEvidenceUri,
+                {
+                  value: CREATE_TRANSACTION_FEE,
+                }
+              )
+          ).to.be.revertedWith("FundMe__MilestoneDataMismatch")
         })
 
         it("creating a transaction with too many milestones should revert", async () => {
@@ -87,8 +108,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockableRevertTooManyMilestonesInitilized,
+                arbitratorExtraData,
                 RECEIVER_WITHDRAW_TIMEOUT,
-                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidenceUri,
                 {
@@ -111,8 +132,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockableRevertPercentageNot100,
+                arbitratorExtraData,
                 RECEIVER_WITHDRAW_TIMEOUT,
-                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidenceUri,
                 {
@@ -128,8 +149,8 @@ import {
               .connect(receiver)
               .createTransaction(
                 milestoneAmountUnlockable,
+                arbitratorExtraData,
                 RECEIVER_WITHDRAW_TIMEOUT,
-                ARBITRATOR_EXTRA_DATA,
                 nonCompliantErc20Mock.address,
                 metaEvidenceUri,
                 {
@@ -149,8 +170,8 @@ import {
                 .connect(receiver)
                 .createTransaction(
                   milestoneAmountUnlockable,
+                  arbitratorExtraData,
                   RECEIVER_WITHDRAW_TIMEOUT,
-                  ARBITRATOR_EXTRA_DATA,
                   erc20Contract.address,
                   metaEvidenceUri,
                   {
@@ -168,11 +189,6 @@ import {
             assert(transaction.receiver == receiver.address, "transaction receiver address is not correct")
             assert(transaction.totalFunded.toNumber() == 0, "transaction amount does not equal the amount sent")
             assert(
-              transaction.arbitratorExtraData == ARBITRATOR_EXTRA_DATA,
-              "transaction arbitrator data sent with transaction" +
-                " does not equal transaction arbitrator data fetched"
-            )
-            assert(
               transaction.crowdfundToken == erc20Contract.address,
               "transaction erc20 token does not match the address passed in the transaction"
             )
@@ -181,6 +197,7 @@ import {
             for (let idx in transaction.milestones) {
               const {
                 amountUnlockablePercentage,
+                arbitratorExtraData,
                 amountClaimable,
                 disputeFeeReceiver,
                 disputeFeeFunders,
@@ -192,6 +209,11 @@ import {
               assert(
                 amountUnlockablePercentage.toString() == milestoneAmountUnlockable[idx].toString(),
                 `amountUnlockable for milestoneId ${idx} does not match expected. Expected: ${milestoneAmountUnlockable[idx]}. Actual: ${amountUnlockablePercentage}`
+              )
+              assert(
+                arbitratorExtraData == ARBITRATOR_EXTRA_DATA,
+                "transaction arbitrator data sent with transaction" +
+                  " does not equal transaction arbitrator data fetched"
               )
               assert(amountClaimable.toNumber() == 0, "amountClaimable is not initilized to 0")
               assert(disputeFeeReceiver.toNumber() == 0, "disputeFeeReceiver is not initilized to 0")
@@ -219,17 +241,12 @@ import {
         beforeEach(async () => {
           funders = [funder1, funder2, funder3]
 
-          const milestoneAmountUnlockable = [
-            ethers.utils.parseEther("0.2"),
-            ethers.utils.parseEther("0.4"),
-            ethers.utils.parseEther("0.4"),
-          ]
           const createTransactionTx = await fundMeContract
             .connect(receiver)
             .createTransaction(
               milestoneAmountUnlockable,
+              arbitratorExtraData,
               RECEIVER_WITHDRAW_TIMEOUT,
-              ARBITRATOR_EXTRA_DATA,
               erc20Contract.address,
               metaEvidenceUri,
               {
@@ -329,17 +346,12 @@ import {
         beforeEach(async () => {
           funders = [funder1, funder2, funder3]
 
-          const milestoneAmountUnlockable = [
-            ethers.utils.parseEther("0.2"),
-            ethers.utils.parseEther("0.4"),
-            ethers.utils.parseEther("0.4"),
-          ]
           const createTransactionTx = await fundMeContract
             .connect(receiver)
             .createTransaction(
               milestoneAmountUnlockable,
+              arbitratorExtraData,
               RECEIVER_WITHDRAW_TIMEOUT,
-              ARBITRATOR_EXTRA_DATA,
               erc20Contract.address,
               metaEvidenceUri,
               {
@@ -405,17 +417,12 @@ import {
         beforeEach(async () => {
           funders = [funder1, funder2, funder3]
 
-          const milestoneAmountUnlockable = [
-            ethers.utils.parseEther("0.2"),
-            ethers.utils.parseEther("0.4"),
-            ethers.utils.parseEther("0.4"),
-          ]
           const createTransactionTx = await fundMeContract
             .connect(receiver)
             .createTransaction(
               milestoneAmountUnlockable,
+              arbitratorExtraData,
               RECEIVER_WITHDRAW_TIMEOUT,
-              ARBITRATOR_EXTRA_DATA,
               erc20Contract.address,
               metaEvidenceUri,
               {

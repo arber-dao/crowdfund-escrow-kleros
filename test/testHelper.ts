@@ -12,7 +12,7 @@ import { CREATE_TRANSACTION_FEE } from "../utils/constants"
  */
 export const ensureBalanceAfterTransaction = async (
   account: SignerWithAddress,
-  transactionValue: string,
+  transactionValue: BigNumber,
   transactionCallback: () => any
 ): Promise<void> => {
   const balanceBefore = await account.getBalance()
@@ -22,7 +22,7 @@ export const ensureBalanceAfterTransaction = async (
   const balanceAfter = await account.getBalance()
 
   assert(
-    (balanceAfter.toBigInt() - balanceBefore.toBigInt()).toString() == transactionValue,
+    balanceAfter.toBigInt() - balanceBefore.toBigInt() == transactionValue.toBigInt(),
     "balance after transaction is not the sum of the balance before and the amount that should have been transfered"
   )
 }

@@ -15,6 +15,15 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
   /**** Types ***************************/
   /**************************************/
 
+  struct Constants {
+    IArbitrator arbitrator; // The address of the arbitrator
+    address governor; // The address of the governor contract
+    uint16 allowedNumberOfMilestones; // The allowed number of milestones in a transaction. NOTE MAX = 2^16 - 1 = 65535
+    uint128 createTransactionCost; // the amount of eth to send when calling createTransaction. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
+    uint64 appealFeeTimeout; /* Time in seconds a party can take to pay arbitration fees before being considered unresponsive at which point they lose 
+                              the dispute. set by the governors. NOTE MAX = 2^64 - 1 seconds = 5.8*10^11 years. Safe */
+  }
+
   /** @notice the current status of a milestone
    *  @param Created The milestone has been created
    *  @param Claiming The milestone has had a request to be claimed by the receiver. The milestone 
@@ -29,18 +38,21 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
   enum Status {
     Created,
     Claiming,
-    WaitingReceiver,
     DisputeCreated,
     Resolved
   }
 
-  struct Constants {
-    IArbitrator arbitrator; // The address of the arbitrator
-    address governor; // The address of the governor contract
-    uint16 allowedNumberOfMilestones; // The allowed number of milestones in a transaction. NOTE MAX = 2^16 - 1 = 65535
-    uint128 createTransactionCost; // the amount of eth to send when calling createTransaction. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
-    uint64 appealFeeTimeout; /* Time in seconds a party can take to pay arbitration fees before being considered unresponsive at which point they lose 
-                              the dispute. set by the governors. NOTE MAX = 2^64 - 1 seconds = 5.8*10^11 years. Safe */
+  enum DisputeChoices {
+    None,
+    FunderWins,
+    ReceiverWins
+  }
+
+  struct DisputeStruct {
+    uint32 transactionId; // ID of the transaction
+    uint16 milestoneId; // ID of the milestone
+    bool isRuled; // Whether the dispute has been ruled or not.
+    DisputeChoices ruling; // Ruling given by the arbitrator. corresponds to one of enum DisputeChoices
   }
 
   struct Milestone {
@@ -49,10 +61,8 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
             1 ether and uint64 allows up to 18 ether  */
     uint256 amountClaimable; /* The amount claimable which is declared when receiver wants to claim a milestone. NOTE should be kept as uint256 incase 
             crowdfundToken has a very large supply */
-    uint128 disputeFeeReceiver; // Arbitration fee paid by the receiver denominated in ETH. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
-    uint128 disputeFeeFunders; // Arbitration fee paid by all funders denominated in ETH  TODO HIGH LEVEL QUESTION: 3!. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
-    uint256 disputeId; // ID of the dispute if this claim is disputed. NOTE this must be uint256 since that is the type the kleros arbitrator passes to rule()
-    address disputePayerForFunders; // The address who first paid the arbitration fee and will be refunded in case of victory. TODO HIGH LEVEL QUESTION: 3!
+    bytes arbitratorExtraData; /* Additional info about the dispute. We use it to pass the ID of the dispute's subcourt (first 32 bytes),
+                                the minimum number of jurors required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes). */
     Status status; // the dispute status for a milestone. TODO IMPLEMENTATION QUESTION: 1! Should disputes occur at the milestone level
   }
 
@@ -63,17 +73,25 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
             has passed. This value will be set to block.timestamp in payDisputeFeeByFunders, requestClaimMilestone functions. */
   }
 
-  struct Transaction {
-    address receiver; // the address that will be paid in the case of completing a dispute
+  struct TransactionFunderDetails {
+    uint256 amountFunded; // The total amount that has been funded to a transaction for a given address, denominated in the specified erc20 token
+    uint32 latestRefundedDisputeId; // the dispute ids for which the funder has been refunded
+  }
+
+  struct TransactionFunds {
     uint256 totalFunded; // Total amount funded denominated in the given crowdfundToken
     uint256 remainingFunds; // Total amount of remaining funds in the transaction after milestones have been finalized. denominated in the given crowdfundToken
+  }
+
+  struct Transaction {
+    address receiver; // the address that will be paid in the case of completing a milestone
+    TransactionFunds transactionFunds;
     uint16 nextClaimableMilestoneCounter; // a counter used to track the next milestone which can be claimed. NOTE MAX = 2^16 - 1 = 65535
-    bytes arbitratorExtraData; /* Additional info about the dispute. We use it to pass the ID of the dispute's subcourt (first 32 bytes),
-                                the minimum number of jurors required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes). */
     Timer timing;
     Milestone[] milestones; // All the milestones to be completed for this crowdfunding event
     IERC20 crowdfundToken; // Token used for the crowdfunding event. The receiver will be paid in this token
-    IERC20 voteToken; // token which will be used to vote in the case of a dispute. TODO HIGH LEVEL QUESTION: 6! Do we want a vote token?
+    uint128 paidDisputeFees; // Arbitration fee paid by all funders denominated in ETH for the current milestone. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
+    uint32[] disputeIds; // tracks the dispute id for everytime the transaction has been disputed
   }
 
   /**************************************/
@@ -94,6 +112,13 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
    */
   event FundTransaction(uint32 indexed _transactionId, address indexed _sender, uint256 _amountFunded);
 
+  /** @notice Emitted when there is an update to an accounts balance
+   *  @param _account the address of the EOA/contract
+   *  @param _token the address of the token the account is to be paid back in
+   *  @param _balance the balance for the given token
+   */
+  event BalanceUpdate(address indexed _account, address indexed _token, uint256 _balance);
+
   /** @notice Emitted when a milestone completion is requested by receiver. This milestone can be disputed for time specified by 
               receiverWithdrawTimeout. 
    *  @param _transactionId The ID of the transaction.
@@ -107,6 +132,23 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
    *  @param _milestoneId The ID of the milestone
    */
   event MilestoneResolved(uint32 indexed _transactionId, uint16 indexed _milestoneId);
+
+  /** @notice Emitted when a dispute needs more funds
+   *  @param _transactionId The ID of the transaction.
+   *  @param _milestoneId The ID of the milestone
+   *  @param _contributor address of contributor
+   *  @param _amountContributed amount contributed by _contributor
+   *  @param _amountRequired amount required to pay for dispute
+   *  @param _amountPaid amount total paid towards raising dispute
+   */
+  event DisputeContribution(
+    uint32 indexed _transactionId,
+    uint16 indexed _milestoneId,
+    address indexed _contributor,
+    uint128 _amountContributed,
+    uint128 _amountRequired,
+    uint128 _amountPaid
+  );
 
   /**************************************/
   /**** Only Governor *******************/
@@ -133,21 +175,25 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
   function changeTransactionReceiver(uint32 _transactionId, address _newTransactionReceiver) external;
 
   /**************************************/
+  /**** Only Funders ********************/
+  /**************************************/
+
+  /**************************************/
   /**** Core Transactions ***************/
   /**************************************/
 
   /** @notice Create a transaction.
    *  @param _milestoneAmountUnlockablePercentage an array of the % withdrawable from each milestone denominated by 1 ether (see struct Milestone {amountUnlockable})
+   *  @param _milestoneArbitratorExtraData the milestone arbitratorExtraData to be used (see Milestone.arbitratorExtraData)
    *  @param _receiverWithdrawTimeout amount of time funders have to dispute a milestone
-   *  @param _arbitratorExtraData The erc20 token to be used in the crowdfunding event
    *  @param _crowdfundToken The erc20 token to be used in the crowdfunding event
    *  @param _metaEvidenceUri Link to the meta-evidence
    *  @return transactionId The index of the transaction.
    */
   function createTransaction(
     uint64[] memory _milestoneAmountUnlockablePercentage,
+    bytes[] memory _milestoneArbitratorExtraData,
     uint64 _receiverWithdrawTimeout,
-    bytes memory _arbitratorExtraData,
     address _crowdfundToken,
     string memory _metaEvidenceUri
   ) external payable returns (uint32 transactionId);
@@ -167,43 +213,28 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
   /** @notice Request to claim a milestone, can only be called by the transaction receiver. at this point, the receiver must submit
               evidence they have completed the milestone. funders can submit a dispute until receiverWithdrawTimeout passes.
    *  @param _transactionId The ID of the transaction to claim funds from
-   *  @param _milestoneId The ID of the milestone to claim funds of
    */
-  function requestClaimMilestone(
-    uint32 _transactionId,
-    uint16 _milestoneId,
-    string memory _evidenceUri
-  ) external;
+  function requestClaimMilestone(uint32 _transactionId, string memory _evidenceUri) external;
 
   /** @notice Claim a milestone. if receiverWithdrawTimeout has passed, anyone can call this function to transfer the milestone funds
               the milestone funds into the balance of the receiver.
    *  @param _transactionId The ID of the transaction to claim funds from
-   *  @param _milestoneId The ID of the milestone to claim funds of
    */
-  function claimMilestone(uint32 _transactionId, uint16 _milestoneId) external;
+  function claimMilestone(uint32 _transactionId) external;
 
   /** @notice Pay fee to dispute a milestone. To be called by parties claiming the milestone was not completed.
    *  The first party to pay the fee entirely will be reimbursed if the dispute is won.
    *  @param _transactionId The transaction ID
-   *  @param _milestoneId The milestone ID which is disputed.
    */
-  function payDisputeFeeByFunders(uint32 _transactionId, uint16 _milestoneId) external payable;
+  function createDispute(uint32 _transactionId) external payable;
 
-  /** @notice Withdraw the money claimed in a milestone. to be called when a dispute has not been created within the time limit.
-   *  @param _transactionId the transaction ID
-   *  @param _milestoneId the milestone ID to withdraw funds
+  /** @notice withdraw funds that are owed to you. Most commonly used by receivers to claim milestone funds, and to withdraw eth funds
+   *  @param tokenAddress tokenAddress to withdraw funds for. NOTE set to 0 address to withdraw eth
    */
-  function withdraw(uint32 _transactionId, uint16 _milestoneId) external;
+  function withdraw(address tokenAddress) external;
 
-  /** @notice timeout to use whe the receiver doesnt pay the dispute fee
-   *  @param _transactionId the transaction ID
-   *  @param _milestoneId the milestone ID to call timeout on
+  /** @notice withdraw erc20 that should be refunded from funders winning a dispute case on a milestone
+   *  @param _transactionId the transactionId to refund for
    */
-  function timeoutByFunders(uint32 _transactionId, uint16 _milestoneId) external;
-
-  /** @notice Appeal an appealable ruling. Transfer the funds to the arbitrator.
-   *  @param _transactionId the transaction ID
-   *  @param _milestoneId the milestone ID to appeal
-   */
-  function appeal(uint32 _transactionId, uint16 _milestoneId) external payable;
+  function refund(uint32 _transactionId) external;
 }

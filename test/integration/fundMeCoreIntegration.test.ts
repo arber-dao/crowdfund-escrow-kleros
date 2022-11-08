@@ -53,12 +53,17 @@ import { testClaimMilestoneData } from "./testData"
           funders = [funder1, funder2, funder3]
 
           for (const transaction in testClaimMilestoneData.transactionsMilestoneAmountUnlockable) {
+            const arbitratorExtraData = Array.from(
+              { length: testClaimMilestoneData.transactionsMilestoneAmountUnlockable[transaction].length },
+              () => ARBITRATOR_EXTRA_DATA
+            )
+
             const createTransactionTx = await fundMeContract
               .connect(receiver)
               .createTransaction(
                 testClaimMilestoneData.transactionsMilestoneAmountUnlockable[transaction],
+                arbitratorExtraData,
                 RECEIVER_WITHDRAW_TIMEOUT,
-                ARBITRATOR_EXTRA_DATA,
                 erc20Contract.address,
                 metaEvidenceUri,
                 {
@@ -145,10 +150,7 @@ import { testClaimMilestoneData } from "./testData"
 
               // check balanceCrowdFundToken for receiver and crowdfund token address
 
-              const receiverBalance = await fundMeContract.balanceCrowdFundToken(
-                receiver.address,
-                erc20Contract.address
-              )
+              const receiverBalance = await fundMeContract.accountBalance(receiver.address, erc20Contract.address)
               assert(
                 receiverBalance.toBigInt() == transactionMilestone.amountClaimable.toBigInt(),
                 `receiverBalance for transactionId ${transactionIds[transactionId]}, milestoneId ${milestoneId} does not equal amountClaimable. ` +
@@ -257,10 +259,7 @@ import { testClaimMilestoneData } from "./testData"
                 .withArgs(transactionIds[transactionId], milestoneId)
 
               // check balanceCrowdFundToken for receiver and crowdfund token address
-              const receiverBalance = await fundMeContract.balanceCrowdFundToken(
-                receiver.address,
-                erc20Contract.address
-              )
+              const receiverBalance = await fundMeContract.accountBalance(receiver.address, erc20Contract.address)
               assert(
                 receiverBalance.toBigInt() == transactionMilestone.amountClaimable.toBigInt(),
                 `receiverBalance for transactionId ${transactionIds[transactionId]}, milestoneId ${milestoneId} does not equal amountClaimable. ` +

@@ -1,7 +1,6 @@
 export enum ArbitrableStatus {
   Created,
   Claiming,
-  WaitingReceiver,
   DisputeCreated,
   Resolved,
 }
