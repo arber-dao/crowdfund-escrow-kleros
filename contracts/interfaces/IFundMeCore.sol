@@ -91,7 +91,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
     Milestone[] milestones; // All the milestones to be completed for this crowdfunding event
     IERC20 crowdfundToken; // Token used for the crowdfunding event. The receiver will be paid in this token
     uint128 paidDisputeFees; // Arbitration fee paid by all funders denominated in ETH for the current milestone. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
-    uint32[] disputeIds; // tracks the dispute id for everytime the transaction has been disputed
+    uint32[] refundableDisputeIds; // tracks the dispute id for everytime funders win a dispute
   }
 
   /**************************************/
@@ -233,7 +233,8 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
    */
   function withdraw(address tokenAddress) external;
 
-  /** @notice withdraw erc20 that should be refunded from funders winning a dispute case on a milestone
+  /** @notice refund erc20 tokens that should be refunded from funders winning a dispute case on a milestone. NOTE the funder still has to call
+   * withdraw() to withdraw the funds
    *  @param _transactionId the transactionId to refund for
    */
   function refund(uint32 _transactionId) external;

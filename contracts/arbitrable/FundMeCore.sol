@@ -215,6 +215,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   }
 
   /// @notice See {IFundMeCore}
+  // TODO needs testing!
   function fundTransaction(uint32 _transactionId, uint256 _amountFunded)
     public
     override(IFundMeCore)
@@ -223,9 +224,12 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   {
     Transaction storage _transaction = transactions[_transactionId];
 
+    // covers edge case where funder has never funded this disputed transaction
+    hasFunderNeverFundedDisputedTransaction(_transactionId);
+
     if (!isFunderRefunded(_transactionId)) {
       revert FundMe__NotRefundedForDispute({
-        latestDisputeId: _transaction.disputeIds[_transaction.disputeIds.length - 1]
+        latestDisputeId: _transaction.refundableDisputeIds[_transaction.refundableDisputeIds.length - 1]
       });
     }
 
@@ -316,8 +320,8 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     }
 
     DisputeChoices ruling = DisputeChoices(_ruling);
-    uint32 disputeId = externalDisputeIdToLocalDisputeId[_disputeId];
-    DisputeStruct storage dispute = disputes[disputeId];
+    uint32 _localDisputeId = externalDisputeIdToLocalDisputeId[_disputeId];
+    DisputeStruct storage dispute = disputes[_localDisputeId];
     Transaction storage _transaction = transactions[dispute.transactionId];
     Milestone storage _milestone = _transaction.milestones[dispute.milestoneId];
 
@@ -336,7 +340,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       });
     }
 
-    executeRuling(dispute, ruling);
+    executeRuling(_localDisputeId, ruling);
   }
 
   /// @notice See {IFundMeCore} TODO needs testing!
@@ -398,7 +402,6 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     externalDisputeIdToLocalDisputeId[externalDisputeId] = localDisputeId;
     localDisputeIdCounter += 1;
-    _transaction.disputeIds.push(localDisputeId);
     _milestone.status = Status.DisputeCreated;
 
     emit Dispute(
@@ -432,15 +435,15 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   }
 
   /// @notice See {IFundMeCore}
-  function refund(uint32 _transactionId) public nonReentrant {
+  function refund(uint32 _transactionId) public override(IFundMeCore) nonReentrant transactionExists(_transactionId) {
     Transaction storage _transaction = transactions[_transactionId];
 
     if (!isFunderRefunded(_transactionId)) {
       uint256 _refundAmount = transactionFunderDetails[_transactionId][msg.sender].amountFunded;
       accountBalance[msg.sender][address(_transaction.crowdfundToken)] += _refundAmount;
       transactionFunderDetails[_transactionId][msg.sender].amountFunded = 0;
-      transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId = _transaction.disputeIds[
-        _transaction.disputeIds.length - 1
+      transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId = _transaction.refundableDisputeIds[
+        _transaction.refundableDisputeIds.length - 1
       ];
     } else {
       revert FundMe__NoRefundableFunds();
@@ -453,10 +456,16 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   }
 
   /**************************************/
-  /**** internal functions ****************/
+  /**** internal functions **************/
   /**************************************/
 
-  function executeRuling(DisputeStruct storage _dispute, DisputeChoices _ruling) internal {
+  /** @notice execute the ruling and modify the necessary state. called by rule()
+   *  @param _localDisputeId local ID of the dispute.
+   *  @param _ruling ruling ID in the form of DisputeChoices enum.
+   *  TODO Needs testing
+   */
+  function executeRuling(uint32 _localDisputeId, DisputeChoices _ruling) internal {
+    DisputeStruct storage _dispute = disputes[_localDisputeId];
     Transaction storage _transaction = transactions[_dispute.transactionId];
     Milestone storage _milestone = _transaction.milestones[_dispute.milestoneId];
 
@@ -470,12 +479,29 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       _milestone.status = Status.Claiming;
       claimMilestone(_dispute.transactionId);
     } else if (_ruling == DisputeChoices.FunderWins) {
-      _transaction.transactionFunds.totalFunded -= _transaction.transactionFunds.remainingFunds;
-      _transaction.transactionFunds.remainingFunds = 0;
-      _milestone.status = Status.Created;
+      refundFunders(_dispute.transactionId, _localDisputeId);
     } else {
-      // TODO ruling was None, what to do here?
+      // TODO ruling was 'Refused to arbitrate', what to do here? For now refund the funders, the onus is on the receiver to submit meaningful evidence
+      refundFunders(_dispute.transactionId, _localDisputeId);
     }
+  }
+
+  /** @notice modifies necessary state to refund the funders. NOTE that the funders still have to call refund() to actually have their funds refunded,
+   *          and have to call withdraw() to actually withdraw refunded funds.
+   *  @param _transactionId ID of the transaction.
+   *  @param _localDisputeId local ID of the dispute.
+   *  TODO Needs testing
+   */
+  function refundFunders(uint32 _transactionId, uint32 _localDisputeId) internal {
+    Transaction storage _transaction = transactions[_transactionId];
+    uint16 _milestoneId = _transaction.nextClaimableMilestoneCounter;
+    Milestone storage _milestone = _transaction.milestones[_milestoneId];
+
+    _transaction.refundableDisputeIds.push(_localDisputeId);
+
+    _transaction.transactionFunds.totalFunded -= _transaction.transactionFunds.remainingFunds;
+    _transaction.transactionFunds.remainingFunds = 0;
+    _milestone.status = Status.Created;
   }
 
   /** @notice calculate the amountClaimable based on the REMAINING milestones left to claim and the transaction remainingFunds
@@ -519,8 +545,8 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     Transaction memory _transaction = transactions[_transactionId];
 
     // if there has not been any disputes for this transaction, set the latestDisputeId to 0 then this function will automatically return true
-    uint32 latestDisputeId = (_transaction.disputeIds.length != 0)
-      ? _transaction.disputeIds[_transaction.disputeIds.length - 1]
+    uint32 latestDisputeId = (_transaction.refundableDisputeIds.length != 0)
+      ? _transaction.refundableDisputeIds[_transaction.refundableDisputeIds.length - 1]
       : 0;
     uint32 latestRefundedDisputeId = transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId;
 
@@ -529,6 +555,29 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
         transactionFunderDetails[_transactionId][msg.sender].amountFunded > 0)
         ? false
         : true;
+  }
+
+  /** @notice check if the funder has never funded this transaction, and if it has been previously disputed, update the necessary state
+   *  @param _transactionId ID of the transaction
+   *  @dev Covers the edge case where a funder has never funded a disputed transaction. They should still be able to fund this transaction, so we
+           need to adjust the latestRefundedDisputeId. NOTE The UI should acknowledge the user that they are funding a preivously dispute transaction
+   *  TODO Needs testing
+   */
+  function hasFunderNeverFundedDisputedTransaction(uint32 _transactionId) internal {
+    Transaction memory _transaction = transactions[_transactionId];
+
+    // if there has not been any disputes for this transaction, set the latestDisputeId to 0 then this function will do nothing
+    uint32 latestDisputeId = (_transaction.refundableDisputeIds.length != 0)
+      ? _transaction.refundableDisputeIds[_transaction.refundableDisputeIds.length - 1]
+      : 0;
+    uint32 latestRefundedDisputeId = transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId;
+
+    if (
+      latestRefundedDisputeId < latestDisputeId &&
+      transactionFunderDetails[_transactionId][msg.sender].amountFunded == 0
+    ) {
+      transactionFunderDetails[_transactionId][msg.sender].latestRefundedDisputeId = latestDisputeId;
+    }
   }
 
   /**************************************/
