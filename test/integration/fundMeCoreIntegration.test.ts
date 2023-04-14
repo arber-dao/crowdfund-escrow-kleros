@@ -4,10 +4,9 @@ import { developmentChains, networkConfig } from "../../helper-hardhat-config"
 import { CentralizedArbitrator, ERC20Mock, FundMeCore, NonCompliantERC20Mock } from "../../typechain-types"
 import { BigNumber, ContractReceipt, ContractTransaction, Event } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
-import { ArbitrableStatus, ArbitrableParty } from "../../types/types"
-import { moveTime } from "../../utils/move-network"
-import { readJson } from "../../utils/readJson"
-import { ensureBalanceAfterTransaction, getEvidenceGroupId } from "../testHelper"
+import { ArbitrableStatus, ArbitrableParty } from "../utils/types"
+import { moveTime, readJson } from "../utils/helpers"
+import { ensureBalanceAfterTransaction, getEvidenceGroupId } from "../utils/testHelper"
 import {
   ALLOWED_NUMBER_OF_MILESTONES,
   APPEAL_DURATION,
@@ -17,8 +16,8 @@ import {
   INFINITESIMAL_VALUE,
   RECEIVER_WITHDRAW_TIMEOUT,
   ZERO_ADDRESS,
-} from "../../utils/constants"
-import { getProjectRoot } from "../../utils/helpers"
+} from "../utils/constants"
+import { getProjectRoot } from "../utils/helpers"
 import { testClaimMilestoneData } from "./testData"
 
 !developmentChains.includes(network.name)

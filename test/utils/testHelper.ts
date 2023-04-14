@@ -2,7 +2,7 @@ import { assert, expect } from "chai"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 import { BigNumber } from "ethers"
 import { ethers } from "hardhat"
-import { CREATE_TRANSACTION_FEE } from "../utils/constants"
+import { CREATE_TRANSACTION_FEE } from "./constants"
 
 /**
  * @notice performs a transaction and ensures the balance of given account is the expected value after the transaction is complete

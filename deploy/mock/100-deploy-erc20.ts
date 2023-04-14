@@ -3,8 +3,8 @@ import { DeployFunction } from "hardhat-deploy/types"
 import { network, ethers } from "hardhat"
 import { networkConfig } from "../../helper-hardhat-config"
 import { developmentChains } from "../../helper-hardhat-config"
-import { verify } from "../../utils/verify"
-import { ERC20_MOCK_TOTAL_SUPPLY } from "../../utils/constants"
+import { verify } from "../../test/utils/helpers"
+import { ERC20_MOCK_TOTAL_SUPPLY } from "../../test/utils/constants"
 
 const deployErc20Mock: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const { getNamedAccounts, deployments, network } = hre

@@ -28,3 +28,7 @@ gas-report.txt
 coverage
 coverage.json
 /typechain-types/
+
+# Foundry
+/cache_forge/
+/artifacts_forge/

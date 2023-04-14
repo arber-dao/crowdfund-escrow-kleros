@@ -3,8 +3,8 @@ import { DeployFunction } from "hardhat-deploy/types"
 import { network, ethers } from "hardhat"
 import { networkConfig } from "../helper-hardhat-config"
 import { developmentChains } from "../helper-hardhat-config"
-import { verify } from "../utils/verify"
-import { APPEAL_DURATION, ARBITRATION_FEE, APPEAL_FEE } from "../utils/constants"
+import { verify } from "../test/utils/helpers"
+import { APPEAL_DURATION, ARBITRATION_FEE, APPEAL_FEE } from "../test/utils/constants"
 
 const deployArbitrator: DeployFunction = async (hre: HardhatRuntimeEnvironment) => {
   const { getNamedAccounts, deployments, network } = hre

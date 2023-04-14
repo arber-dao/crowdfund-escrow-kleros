@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8;
 
-import "./IArbitrable.sol";
+import {IArbitrable} from "./IArbitrable.sol";
 
 /**
  * @title Arbitrator

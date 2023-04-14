@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./IFundMeCore.sol";
+import {IFundMeCore} from "./IFundMeCore.sol";
 
 /** @title FundMeErrors
  *  Errors for FundMeCore Contract
  */
 interface IFundMeErrors {
-  /** @notice throw when msg.sender tries to call a function that only the transaction receiver has access to call
-   *  @param receiver the authorized receiver
+  /** @notice throw when msg.sender tries to call a function that only the project creator has access to call
+   *  @param creator the authorized creator
    */
-  error FundMe__OnlyTransactionReceiver(address receiver);
+  error FundMe__OnlyProjectCreator(address creator);
 
   /** @notice throw when msg.sender tries to call a function that only the arbitrator has access to call
    *  @param arbitrator the authorized arbitrator
@@ -18,15 +18,15 @@ interface IFundMeErrors {
   error FundMe__OnlyArbitrator(address arbitrator);
 
   /** @notice throw when payment to a payable function is not enough
-   *  @param amountRequired amount required to complete the transaction
-   *  @param amountSent amount sent with the transaction
+   *  @param amountRequired amount required to complete the project
+   *  @param amountSent amount sent with the project
    */
   error FundMe__PaymentTooSmall(uint128 amountRequired, uint128 amountSent);
 
-  /** @notice throw when the requested transaction does not exist
-   *  @param transactionId the id of the requested transaction
+  /** @notice throw when the requested project does not exist
+   *  @param projectId the id of the requested project
    */
-  error FundMe__TransactionNotFound(uint32 transactionId);
+  error FundMe__ProjectNotFound(uint32 projectId);
 
   /// @notice throw when transfer unsuccessful
   error FundMe__TransferUnsuccessful();
@@ -42,29 +42,29 @@ interface IFundMeErrors {
    */
   error FundMe__NonCompliantERC20(address nonCompliantErc20);
 
-  /// @notice throw when there is a milestone data mismatch such as length of milestone arrays passed to createTransaction
+  /// @notice throw when there is a milestone data mismatch such as length of milestone arrays passed to createProject
   ///         for milestone data are not the same
   error FundMe__MilestoneDataMismatch();
 
   /** @notice throw when milestone status is not set to Created
-   *  @param transactionId ID of the transaction
+   *  @param projectId ID of the project
    *  @param milestoneId ID of the milestone
    */
-  error FundMe__MilestoneStatusNotCreated(uint32 transactionId, uint16 milestoneId);
+  error FundMe__MilestoneStatusNotCreated(uint32 projectId, uint16 milestoneId);
 
   /** @notice throw when milestone status is not set to Claiming
-   *  @param transactionId ID of the transaction
+   *  @param projectId ID of the project
    *  @param milestoneId ID of the milestone
    */
-  error FundMe__MilestoneStatusNotClaiming(uint32 transactionId, uint16 milestoneId);
+  error FundMe__MilestoneStatusNotClaiming(uint32 projectId, uint16 milestoneId);
 
-  /** @notice throw when receiver tries to initilize incorrect number of milestones
+  /** @notice throw when creator tries to initilize incorrect number of milestones
    *  @param min min number of allowed milestones
    *  @param max max number of allowed milestones
    */
   error FundMe__IncorrectNumberOfMilestoneInitilized(uint16 min, uint16 max);
 
-  /// @notice throw when a transactions sum of all milestones amountUnlockable does not total 1 ether
+  /// @notice throw when a projects sum of all milestones amountUnlockable does not total 1 ether
   error FundMe__MilestoneAmountUnlockablePercentageNot1();
 
   /// @notice throw when the zero address is not a useable address
@@ -79,8 +79,8 @@ interface IFundMeErrors {
   /// @notice throw when there are no funds to refund
   error FundMe__NoRefundableFunds();
 
-  /** @notice throw when funder attempts to fund a transaction, but has not yet been refunded for a previous dispute on the transaction
-   *  @param latestDisputeId the id for the latest dispute on the transaction
+  /** @notice throw when donor attempts to fund a project, but has not yet been refunded for a previous dispute on the project
+   *  @param latestDisputeId the id for the latest dispute on the project
    */
   error FundMe__NotRefundedForDispute(uint32 latestDisputeId);
 
