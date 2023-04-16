@@ -144,8 +144,8 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     address _crowdfundToken,
     string memory _metaEvidenceUri
   ) public payable override(IFundMeCore) returns (uint32 projectId) {
-    if (msg.value < constants.createProjectCost) {
-      revert FundMe__PaymentTooSmall({amountRequired: constants.createProjectCost, amountSent: uint128(msg.value)});
+    if (msg.value != constants.createProjectCost) {
+      revert FundMe__IncorrectPayment({amountRequired: constants.createProjectCost, amountSent: uint128(msg.value)});
     }
     // milestone length must be less than the allowed number of milestones
     if (
@@ -154,8 +154,8 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     ) {
       revert FundMe__IncorrectNumberOfMilestoneInitilized({min: 1, max: constants.allowedNumberOfMilestones});
     }
-    if (_milestoneAmountUnlockablePercentage.getSum() != 1 ether) {
-      revert FundMe__MilestoneAmountUnlockablePercentageNot1();
+    if (_milestoneAmountUnlockablePercentage.getSum() != 1e18) {
+      revert FundMe__MilestoneAmountUnlockablePercentageNot1({value: _milestoneAmountUnlockablePercentage.getSum()});
     }
     if (_milestoneAmountUnlockablePercentage.length != _milestoneArbitratorExtraData.length) {
       revert FundMe__MilestoneDataMismatch();
@@ -207,7 +207,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     _project.projectFunds.remainingFunds += _amountFunded;
     projectDonorDetails[_projectId][msg.sender].amountFunded += _amountFunded;
 
-    emit FundProject(_projectId, msg.sender, _amountFunded);
+    emit ProjectDonated(_projectId, msg.sender, _amountFunded);
   }
 
   /// @notice See {IFundMeCore} TODO Needs testing
@@ -228,7 +228,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     // since donors can keep funding a project after milestones have been claimed, a milestones amountClaimable should
     // depend on the remaining milestones amountUnlockable. Therefore we need to adjust the % claimable such that the REMAINING
-    // milestones amountUnlockablePercentage total to 100% (1 ether), then we can calculate the amountClaimable
+    // milestones amountUnlockablePercentage total to 100% (1e18), then we can calculate the amountClaimable
     _milestone.amountClaimable = getMilestoneAmountClaimable(_projectId);
 
     emit MilestoneProposed(_projectId, _milestoneId);
@@ -477,16 +477,16 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       remainingMilestonesAmountUnlockable[i] = _project.milestones[i + _milestoneId].amountUnlockablePercentage;
     }
 
-    // sum of remaining milestones amountUnlockablePercentage will total < 100% (1 ether). dividing each remaining milestone
+    // sum of remaining milestones amountUnlockablePercentage will total < 100% (1e18). dividing each remaining milestone
     // amountUnlockablePercentage by the sum of all remaining amountUnlockablePercentage, and recalculating the sum of all those
-    // values will yield a total of 100% (1 ether). since we only require percentage claimable for the given milestone, we only
+    // values will yield a total of 100% (1e18). since we only require percentage claimable for the given milestone, we only
     // calculate percentage claimable for the first index of the remaining milestones amountUnlockablePercentage
-    uint256 percentageClaimable = (uint256(remainingMilestonesAmountUnlockable[0]) * 1 ether) /
+    uint256 percentageClaimable = (uint256(remainingMilestonesAmountUnlockable[0]) * 1e18) /
       remainingMilestonesAmountUnlockable.getSum();
-    // now we can calculate the amountClaimable of the erc20 crowdFundToken. since percentageClaimable is denominated by 1 ether
-    // we must divide by 1 ether in order to to get an actual percentage as a fraction (if percentageClaimable for a given
-    // milestone was 0.2 ether the amount claimable should be remainingFunds * 0.2, NOT remainingFunds * 0.2 ether)
-    amountClaimable = (_project.projectFunds.remainingFunds * percentageClaimable) / 1 ether;
+    // now we can calculate the amountClaimable of the erc20 crowdFundToken. since percentageClaimable is denominated by 1e18
+    // we must divide by 1e18 in order to to get an actual percentage as a fraction (if percentageClaimable for a given
+    // milestone was 0.2e18 the amount claimable should be remainingFunds * 0.2, NOT remainingFunds * 0.2e18)
+    amountClaimable = (_project.projectFunds.remainingFunds * percentageClaimable) / 1e18;
   }
 
   /** @notice check if the donor has been refunded

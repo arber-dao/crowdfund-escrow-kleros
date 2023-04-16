@@ -3,8 +3,8 @@ pragma solidity 0.8.13;
 
 import "hardhat/console.sol";
 
-/** @title FundMe
- *  A contract storing ERC20 tokens raised in a crowdfunding event.
+/** @title Arrays64
+ *  @notice Library for common array operations
  */
 library Arrays64 {
   error IndexGreaterThanArrayLength();

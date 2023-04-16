@@ -121,11 +121,7 @@ contract CentralizedArbitrator is IArbitrator {
    *  @param _appealDuration Duration of the appeal period.
    *  @param _appealFee Amount to be paid to fund one of the appeal choices, not counting the additional fee stake amount.
    */
-  constructor(
-    uint256 _arbitrationFee,
-    uint256 _appealDuration,
-    uint256 _appealFee
-  ) {
+  constructor(uint256 _arbitrationFee, uint256 _appealDuration, uint256 _appealFee) {
     arbitrationFee = _arbitrationFee;
     appealDuration = _appealDuration;
     appealFee = _appealFee;
@@ -160,12 +156,10 @@ contract CentralizedArbitrator is IArbitrator {
    *  @param _extraData Can be used to give additional info on the dispute to be created.
    *  @return disputeID ID of the dispute created.
    */
-  function createDispute(uint256 _choices, bytes calldata _extraData)
-    external
-    payable
-    override
-    returns (uint256 disputeID)
-  {
+  function createDispute(
+    uint256 _choices,
+    bytes calldata _extraData
+  ) external payable override returns (uint256 disputeID) {
     uint256 localArbitrationCost = arbitrationCost(_extraData);
     require(msg.value >= localArbitrationCost, "Not enough ETH to cover arbitration costs.");
     disputeID = disputes.length;
@@ -248,8 +242,7 @@ contract CentralizedArbitrator is IArbitrator {
     if (msg.value > contribution) payable(msg.sender).send(msg.value - contribution);
   }
 
-  /** @dev Give a ruling to a dispute. Once it's given the dispute can be appealed, and after the appeal
-   *  period has passed this function should be called again to finalize the ruling.
+  /** @dev Give a ruling to a dispute. Once it's given the dispute can be appealed, and after the appeal period has passed this function should be called again to finalize the ruling.
    *  Accounts for the situation where the winner loses a case due to paying less appeal fees than expected.
    *  @param _disputeID ID of the dispute to rule.
    *  @param _ruling Ruling given by the arbitrator. Note that 0 means that arbitrator chose "Refused to rule".
@@ -330,9 +323,7 @@ contract CentralizedArbitrator is IArbitrator {
   /** @dev Cost of arbitration.
    *  @return fee The required amount.
    */
-  function arbitrationCost(
-    bytes calldata /*_extraData*/
-  ) public view override returns (uint256 fee) {
+  function arbitrationCost(bytes calldata /*_extraData*/) public view override returns (uint256 fee) {
     return arbitrationFee;
   }
 

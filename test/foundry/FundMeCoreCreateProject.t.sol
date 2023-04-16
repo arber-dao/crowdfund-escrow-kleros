@@ -5,203 +5,159 @@ import "forge-std/console.sol";
 
 import {FundMeCoreHelper} from "./FundMeCoreHelper.t.sol";
 import {FundMeCore} from "@root/arbitrable/FundMeCore.sol";
+import {IFundMeErrors} from "@root/interfaces/IFundMeErrors.sol";
+import {IFundMeCore} from "@root/interfaces/IFundMeCore.sol";
 import {CentralizedArbitrator} from "@root/arbitrator/CentralizedArbitrator.sol";
 
 contract FundMeCoreCreateProjectTest is Test, FundMeCoreHelper {
-  function setUp() public {
-    assertTrue(true);
-  }
+  uint64[] public milestoneAmountUnlockable = [0.1e18, 0.5e18, 0.4e18];
+  bytes arbitratorExtraData =
+    hex"0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a"; // 10 jurors
+  bytes[] public milestoneArbitratorExtraData = [arbitratorExtraData, arbitratorExtraData, arbitratorExtraData];
+
+  event ProjectCreated(uint32 indexed _projectId, address indexed _creator, address indexed _crowdFundToken);
 
   function testTooLittlePayment() public {
-    // should revert if not enough ether is sent to create the transaction
-    // fundMeCore.createProject();
+    uint128 payment = CREATE_PROJECT_COST - 1;
+
+    vm.expectRevert(
+      abi.encodeWithSelector(IFundMeErrors.FundMe__IncorrectPayment.selector, CREATE_PROJECT_COST, payment)
+    );
+
+    fundMeCore.createProject{value: payment}(
+      milestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
   }
 
-  function testIncorrectNumberMilestones() public {}
+  function testIncorrectPaymentFuzz(uint64 payment) public {
+    if (payment != CREATE_PROJECT_COST) {
+      vm.expectRevert(
+        abi.encodeWithSelector(IFundMeErrors.FundMe__IncorrectPayment.selector, CREATE_PROJECT_COST, payment)
+      );
+    }
 
-  function testMilestoneArbitratorExtraDataLengthMismatch() public {}
+    fundMeCore.createProject{value: payment}(
+      milestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
+  }
 
-  function testMilestoneAmountUnlockablePercentageNot100() public {}
+  function testIncorrectNumberMilestones() public {
+    uint16 tooManyMilestones = ALLOWED_NUMBER_OF_MILESTONES + 1;
+    uint64[] memory tooManyMilestoneAmountUnlockable = new uint64[](tooManyMilestones);
+    for (uint16 i = 0; i < tooManyMilestones; i++) {
+      tooManyMilestoneAmountUnlockable[i] = 1e18 / tooManyMilestones;
+    }
 
-  function testCrowdfundTokenNotERC20() public {}
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IFundMeErrors.FundMe__IncorrectNumberOfMilestoneInitilized.selector,
+        1,
+        ALLOWED_NUMBER_OF_MILESTONES
+      )
+    );
 
-  function testSuccess() public {}
+    fundMeCore.createProject{value: CREATE_PROJECT_COST}(
+      tooManyMilestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
+  }
+
+  function testMilestoneArbitratorExtraDataLengthMismatch() public {
+    milestoneArbitratorExtraData.pop();
+
+    vm.expectRevert(IFundMeErrors.FundMe__MilestoneDataMismatch.selector);
+
+    fundMeCore.createProject{value: CREATE_PROJECT_COST}(
+      milestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
+  }
+
+  function testMilestoneAmountUnlockablePercentageNot100() public {
+    milestoneAmountUnlockable[0] -= 1;
+
+    vm.expectRevert(
+      abi.encodeWithSelector(IFundMeErrors.FundMe__MilestoneAmountUnlockablePercentageNot1.selector, 1e18 - 1)
+    );
+
+    fundMeCore.createProject{value: CREATE_PROJECT_COST}(
+      milestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
+  }
+
+  function testCrowdfundTokenNotERC20() public {
+    vm.expectRevert(
+      abi.encodeWithSelector(IFundMeErrors.FundMe__NonCompliantERC20.selector, address(nonCompliantERC20Mock))
+    );
+
+    fundMeCore.createProject{value: CREATE_PROJECT_COST}(
+      milestoneAmountUnlockable,
+      milestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(nonCompliantERC20Mock),
+      META_EVIDENCE_URI
+    );
+  }
+
+  function testMaxMilestonesSuccess() public {
+    uint32 projectId = 1;
+    uint64[] memory maxMilestoneAmountUnlockable = new uint64[](ALLOWED_NUMBER_OF_MILESTONES);
+    bytes[] memory maxMilestoneArbitratorExtraData = new bytes[](ALLOWED_NUMBER_OF_MILESTONES);
+
+    for (uint16 i = 0; i < ALLOWED_NUMBER_OF_MILESTONES; i++) {
+      maxMilestoneAmountUnlockable[i] = 1e18 / ALLOWED_NUMBER_OF_MILESTONES;
+      maxMilestoneArbitratorExtraData[i] = arbitratorExtraData;
+    }
+
+    vm.expectEmit(true, true, false, true, address(fundMeCore));
+    emit ProjectCreated(projectId, address(this), address(erc20Mock));
+
+    fundMeCore.createProject{value: CREATE_PROJECT_COST}(
+      maxMilestoneAmountUnlockable,
+      maxMilestoneArbitratorExtraData,
+      CREATOR_WITHDRAW_TIMEOUT,
+      address(erc20Mock),
+      META_EVIDENCE_URI
+    );
+
+    assertEq(fundMeCore.getProject(projectId).creator, address(this));
+    assertEq(fundMeCore.getProject(projectId).nextClaimableMilestoneCounter, 0);
+    assertEq(fundMeCore.getProject(projectId).timing.creatorWithdrawTimeout, CREATOR_WITHDRAW_TIMEOUT);
+    assertEq(fundMeCore.getProject(projectId).timing.lastInteraction, 0);
+    assertEq(fundMeCore.getProject(projectId).projectFunds.totalFunded, 0);
+    assertEq(fundMeCore.getProject(projectId).projectFunds.remainingFunds, 0);
+    assertEq(address(fundMeCore.getProject(projectId).crowdfundToken), address(erc20Mock));
+    assertEq(fundMeCore.getProject(projectId).paidDisputeFees, 0);
+    assertEq(fundMeCore.getProject(projectId).latestRefundableDisputeId, 0);
+    assertEq(fundMeCore.getProject(projectId).milestones.length, ALLOWED_NUMBER_OF_MILESTONES);
+    for (uint16 i = 0; i < ALLOWED_NUMBER_OF_MILESTONES; i++) {
+      assertEq(
+        fundMeCore.getProjectMilestone(projectId, i).amountUnlockablePercentage,
+        1e18 / ALLOWED_NUMBER_OF_MILESTONES
+      );
+      assertEq(fundMeCore.getProjectMilestone(projectId, i).arbitratorExtraData, arbitratorExtraData);
+      assertEq(fundMeCore.getProjectMilestone(projectId, i).amountClaimable, 0);
+      if (fundMeCore.getProjectMilestone(projectId, 1).status != IFundMeCore.Status.Created) {
+        fail("Milestone status should be Created");
+      }
+    }
+  }
 }
-
-// describe("createTransaction()", async () => {
-//         it("creating a transaction with too little payment should revert", async () => {
-//           // should revert if not enough ether is sent to create the transaction
-//           await expect(
-//             fundMeContract
-//               .connect(receiver)
-//               .createTransaction(
-//                 milestoneAmountUnlockable,
-//                 arbitratorExtraData,
-//                 RECEIVER_WITHDRAW_TIMEOUT,
-//                 erc20Contract.address,
-//                 metaEvidenceUri,
-//                 {
-//                   value: CREATE_TRANSACTION_FEE.sub(ethers.utils.parseEther("0.0001")),
-//                 }
-//               )
-//           ).to.be.revertedWith("FundMe__PaymentTooSmall")
-//         })
-
-//         it("creating a transaction with milestone data mismatch should revert", async () => {
-//           const dataMismatchArbitratorExtraData = Array.from(
-//             { length: milestoneAmountUnlockable.length - 1 },
-//             () => ARBITRATOR_EXTRA_DATA
-//           )
-//           await expect(
-//             fundMeContract
-//               .connect(receiver)
-//               .createTransaction(
-//                 milestoneAmountUnlockable,
-//                 dataMismatchArbitratorExtraData,
-//                 RECEIVER_WITHDRAW_TIMEOUT,
-//                 erc20Contract.address,
-//                 metaEvidenceUri,
-//                 {
-//                   value: CREATE_TRANSACTION_FEE,
-//                 }
-//               )
-//           ).to.be.revertedWith("FundMe__MilestoneDataMismatch")
-//         })
-
-//         it("creating a transaction with too many milestones should revert", async () => {
-//           // populate an array with 1 too many milestones such that the array totals to 100
-//           // (milestoneAmountUnlockable needs to total to 100%)
-//           let milestoneAmountUnlockableRevertTooManyMilestonesInitilized: Array<BigNumber> = []
-//           let tooManyMilestones = ALLOWED_NUMBER_OF_MILESTONES + 1
-//           for (let i = 0; i < tooManyMilestones; i++) {
-//             milestoneAmountUnlockableRevertTooManyMilestonesInitilized.push(
-//               ethers.utils.parseEther(String(1 / tooManyMilestones))
-//             )
-//           }
-
-//           // should revert if there are too many milestones initilized
-//           await expect(
-//             fundMeContract
-//               .connect(receiver)
-//               .createTransaction(
-//                 milestoneAmountUnlockableRevertTooManyMilestonesInitilized,
-//                 arbitratorExtraData,
-//                 RECEIVER_WITHDRAW_TIMEOUT,
-//                 erc20Contract.address,
-//                 metaEvidenceUri,
-//                 {
-//                   value: CREATE_TRANSACTION_FEE,
-//                 }
-//               )
-//           ).to.be.revertedWith("FundMe__TooManyMilestonesInitilized")
-//         })
-
-//         it("creating a transaction with milestoneAmountUnlockable array does not totaling to 1 ether should revert", async () => {
-//           const milestoneAmountUnlockableRevertPercentageNot100 = [
-//             ethers.utils.parseEther("0.2"),
-//             ethers.utils.parseEther("0.3"),
-//             ethers.utils.parseEther("0.4"),
-//           ]
-
-//           // should revert if milestoneAmountUnlockable array does not total to 100
-//           await expect(
-//             fundMeContract
-//               .connect(receiver)
-//               .createTransaction(
-//                 milestoneAmountUnlockableRevertPercentageNot100,
-//                 arbitratorExtraData,
-//                 RECEIVER_WITHDRAW_TIMEOUT,
-//                 erc20Contract.address,
-//                 metaEvidenceUri,
-//                 {
-//                   value: CREATE_TRANSACTION_FEE,
-//                 }
-//               )
-//           ).to.be.revertedWith("FundMe__MilestoneAmountUnlockablePercentageNot1")
-//         })
-
-//         it("user should not be able to pass a non compliant erc20 token", async () => {
-//           await expect(
-//             fundMeContract
-//               .connect(receiver)
-//               .createTransaction(
-//                 milestoneAmountUnlockable,
-//                 arbitratorExtraData,
-//                 RECEIVER_WITHDRAW_TIMEOUT,
-//                 nonCompliantErc20Mock.address,
-//                 metaEvidenceUri,
-//                 {
-//                   value: CREATE_TRANSACTION_FEE,
-//                 }
-//               )
-//           ).to.be.revertedWith("FundMe__NonCompliantERC20")
-//         })
-
-//         it(
-//           "creating a transaction should emit two events and all transaction parameters" +
-//             " should hold a particular initilization value",
-//           async () => {
-//             // should successfully create transaction and emit events
-//             await expect(
-//               fundMeContract
-//                 .connect(receiver)
-//                 .createTransaction(
-//                   milestoneAmountUnlockable,
-//                   arbitratorExtraData,
-//                   RECEIVER_WITHDRAW_TIMEOUT,
-//                   erc20Contract.address,
-//                   metaEvidenceUri,
-//                   {
-//                     value: CREATE_TRANSACTION_FEE,
-//                   }
-//                 )
-//             )
-//               .to.emit(fundMeContract, "MetaEvidence")
-//               .withArgs(mainTransactionId, "My evidence")
-//               .to.emit(fundMeContract, "TransactionCreated")
-//               .withArgs(mainTransactionId, receiver.address, erc20Contract.address)
-
-//             const transaction = await fundMeContract.getTransaction(mainTransactionId)
-
-//             assert(transaction.receiver == receiver.address, "transaction receiver address is not correct")
-//             assert(transaction.totalFunded.toNumber() == 0, "transaction amount does not equal the amount sent")
-//             assert(
-//               transaction.crowdfundToken == erc20Contract.address,
-//               "transaction erc20 token does not match the address passed in the transaction"
-//             )
-
-//             // check all milestones for the transaction are properly initilized
-//             for (let idx in transaction.milestones) {
-//               const {
-//                 amountUnlockablePercentage,
-//                 arbitratorExtraData,
-//                 amountClaimable,
-//                 disputeFeeReceiver,
-//                 disputeFeeFunders,
-//                 disputeId,
-//                 disputePayerForFunders,
-//                 status,
-//               } = await fundMeContract.getTransactionMilestone(mainTransactionId, idx)
-
-//               assert(
-//                 amountUnlockablePercentage.toString() == milestoneAmountUnlockable[idx].toString(),
-//                 `amountUnlockable for milestoneId ${idx} does not match expected. Expected: ${milestoneAmountUnlockable[idx]}. Actual: ${amountUnlockablePercentage}`
-//               )
-//               assert(
-//                 arbitratorExtraData == ARBITRATOR_EXTRA_DATA,
-//                 "transaction arbitrator data sent with transaction" +
-//                   " does not equal transaction arbitrator data fetched"
-//               )
-//               assert(amountClaimable.toNumber() == 0, "amountClaimable is not initilized to 0")
-//               assert(disputeFeeReceiver.toNumber() == 0, "disputeFeeReceiver is not initilized to 0")
-//               assert(disputeFeeFunders.toNumber() == 0, "disputeFeeFunders is not initilized to 0")
-//               assert(disputeId.toNumber() == 0, "disputeId is not initilized to 0")
-//               assert(
-//                 disputePayerForFunders == ZERO_ADDRESS,
-//                 "disputePayerForFunders is not initilized to the zero address"
-//               )
-//               assert(status == ArbitrableStatus.Created, "status is not initilized to Created")
-//             }
-//           }
-//         )
-//       })

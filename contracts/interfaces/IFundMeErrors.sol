@@ -21,7 +21,7 @@ interface IFundMeErrors {
    *  @param amountRequired amount required to complete the project
    *  @param amountSent amount sent with the project
    */
-  error FundMe__PaymentTooSmall(uint128 amountRequired, uint128 amountSent);
+  error FundMe__IncorrectPayment(uint128 amountRequired, uint128 amountSent);
 
   /** @notice throw when the requested project does not exist
    *  @param projectId the id of the requested project
@@ -64,8 +64,8 @@ interface IFundMeErrors {
    */
   error FundMe__IncorrectNumberOfMilestoneInitilized(uint16 min, uint16 max);
 
-  /// @notice throw when a projects sum of all milestones amountUnlockable does not total 1 ether
-  error FundMe__MilestoneAmountUnlockablePercentageNot1();
+  /// @notice throw when a projects sum of all milestones amountUnlockable does not total 1e18
+  error FundMe__MilestoneAmountUnlockablePercentageNot1(uint64 value);
 
   /// @notice throw when the zero address is not a useable address
   error FundMe__ZeroAddressInvalid();

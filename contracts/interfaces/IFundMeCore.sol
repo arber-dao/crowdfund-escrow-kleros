@@ -19,7 +19,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
     IArbitrator arbitrator; // The address of the arbitrator
     address governor; // The address of the governor contract
     uint16 allowedNumberOfMilestones; // The allowed number of milestones in a project. NOTE MAX = 2^16 - 1 = 65535
-    uint128 createProjectCost; // the amount of eth to send when calling createProject. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
+    uint128 createProjectCost; // the amount of eth to send when calling createProject. NOTE MAX = 2^128 - 1 = 3.4*10^20e18
   }
 
   /** @notice the current status of a milestone
@@ -55,12 +55,12 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
 
   struct Milestone {
     uint64 amountUnlockablePercentage /* The amount as a percentage which can be unlocked for this milestone (value for each milestone 
-            is measured between 0 and 1 ether ie. 0.2 ether corresponds to 20%). NOTE uint64 is safe since amountUnlockablePercentage cannot exceed
-            1 ether and uint64 allows up to 18 ether  */;
+            is measured between 0 and 1e18 ie. 0.2e18 corresponds to 20%). NOTE uint64 is safe since amountUnlockablePercentage cannot exceed
+            1e18 and uint64 allows up to 18e18  */;
     uint256 amountClaimable /* The amount claimable which is declared when creator wants to claim a milestone. NOTE should be kept as uint256 incase 
             crowdfundToken has a very large supply */;
     bytes arbitratorExtraData /* Additional info about the dispute. We use it to pass the ID of the dispute's subcourt (first 32 bytes),
-                                the minimum number of jurors required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes). */;
+                                the minimum number of jurors required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes, choose 0 for default). */;
     Status status; // the dispute status for a milestone. TODO IMPLEMENTATION QUESTION: 1! Should disputes occur at the milestone level
   }
 
@@ -88,7 +88,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
     Timer timing;
     Milestone[] milestones; // All the milestones to be completed for this crowdfunding event
     IERC20 crowdfundToken; // Token used for the crowdfunding event. The creator will be paid in this token
-    uint128 paidDisputeFees; // Arbitration fee paid by all donors denominated in ETH for the current milestone. NOTE MAX = 2^128 - 1 = 3.4*10^20 ether
+    uint128 paidDisputeFees; // Arbitration fee paid by all donors denominated in ETH for the current milestone. NOTE MAX = 2^128 - 1 = 3.4*10^20e18
     uint32 latestRefundableDisputeId; // tracks the latest dispute id for which the donors can withdraw their funds
   }
 
@@ -108,7 +108,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
    *  @param _sender the address that sent funds to _projectId
    *  @param _amountFunded The amount funded to the project
    */
-  event FundProject(uint32 indexed _projectId, address indexed _sender, uint256 _amountFunded);
+  event ProjectDonated(uint32 indexed _projectId, address indexed _sender, uint256 _amountFunded);
 
   /** @notice Emitted when there is an update to an accounts balance
    *  @param _account the address of the EOA/contract
@@ -181,7 +181,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
   /**************************************/
 
   /** @notice Create a project.
-   *  @param _milestoneAmountUnlockablePercentage an array of the % withdrawable from each milestone denominated by 1 ether (see struct Milestone {amountUnlockable})
+   *  @param _milestoneAmountUnlockablePercentage an array of the % withdrawable from each milestone denominated by 1e18 (see struct Milestone {amountUnlockable})
    *  @param _milestoneArbitratorExtraData the milestone arbitratorExtraData to be used (see Milestone.arbitratorExtraData)
    *  @param _creatorWithdrawTimeout amount of time donors have to dispute a milestone
    *  @param _crowdfundToken The erc20 token to be used in the crowdfunding event
