@@ -38,19 +38,19 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   // thegraph will be very useful for this
   // account address => erc20 contract address --> returns balance of erc20 token to be paid to account address
   // NOTE that if the address for the second mapping (erc20 contract address) is the 0 address, that indicates the native token balance (ETH)
-  mapping(address => mapping(address => uint256)) public accountBalance;
+  mapping(address => mapping(address => uint256)) private accountBalance;
 
   /**** Project State ***************/
   uint32 public projectIdCounter;
   mapping(uint32 => Project) private projects; // mapping of all of the projects
 
   // projectId => donors address --> returns ProjectDonorDetails
-  mapping(uint32 => mapping(address => ProjectDonorDetails)) public projectDonorDetails;
+  mapping(uint32 => mapping(address => ProjectDonorDetails)) private projectDonorDetails;
 
   /**** Dispute State ******************/
   uint32 public localDisputeIdCounter;
-  mapping(uint32 => DisputeStruct) public disputes;
-  mapping(uint256 => uint32) public externalDisputeIdToLocalDisputeId; // Maps external (arbitrator side) dispute IDs to local dispute IDs.
+  mapping(uint32 => DisputeStruct) private disputes;
+  mapping(uint256 => uint32) private externalDisputeIdToLocalDisputeId; // Maps external (arbitrator side) dispute IDs to local dispute IDs.
 
   /**** Milestone State ****************/
 
@@ -177,7 +177,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
           amountUnlockablePercentage: _milestoneAmountUnlockablePercentage[i],
           arbitratorExtraData: _milestoneArbitratorExtraData[i],
           amountClaimable: 0,
-          status: Status.Created
+          status: MilestoneStatus.Created
         })
       );
     }
@@ -219,25 +219,20 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     uint16 _milestoneId = _project.nextClaimableMilestoneCounter;
     Milestone storage _milestone = _project.milestones[_milestoneId];
 
-    if (_milestone.status != Status.Created) {
+    if (_milestone.status != MilestoneStatus.Created) {
       revert FundMe__MilestoneStatusNotCreated(_projectId, _milestoneId);
     }
 
     _project.timing.lastInteraction = uint64(block.timestamp);
-    _milestone.status = Status.Claiming;
+    _milestone.status = MilestoneStatus.Claiming;
 
     // since donors can keep funding a project after milestones have been claimed, a milestones amountClaimable should
     // depend on the remaining milestones amountUnlockable. Therefore we need to adjust the % claimable such that the REMAINING
     // milestones amountUnlockablePercentage total to 100% (1e18), then we can calculate the amountClaimable
     _milestone.amountClaimable = getMilestoneAmountClaimable(_projectId);
 
+    emit Evidence(constants.arbitrator, getEvidenceGroupId(_projectId, _milestoneId), msg.sender, _evidenceUri);
     emit MilestoneProposed(_projectId, _milestoneId);
-    emit Evidence(
-      constants.arbitrator,
-      getEvidenceGroupId(_projectId, _milestoneId),
-      msg.sender, // What do i put for the party? donors can be many different addresses
-      _evidenceUri
-    );
   }
 
   /// @notice See {IFundMeCore} TODO Needs testing
@@ -246,7 +241,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     uint16 _milestoneId = _project.nextClaimableMilestoneCounter;
     Milestone storage _milestone = _project.milestones[_milestoneId];
 
-    if (_milestone.status != Status.Claiming) {
+    if (_milestone.status != MilestoneStatus.Claiming) {
       revert FundMe__MilestoneStatusNotClaiming(_projectId, _milestoneId);
     }
 
@@ -261,7 +256,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     // TODO Possibly need more checks.
 
     _project.nextClaimableMilestoneCounter += 1;
-    _milestone.status = Status.Resolved;
+    _milestone.status = MilestoneStatus.Resolved;
     accountBalance[_project.creator][address(_project.crowdfundToken)] += _milestone.amountClaimable;
     _project.projectFunds.remainingFunds -= _milestone.amountClaimable;
 
@@ -293,7 +288,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
       revert FundMe__DisputeAlreadyRuled();
     }
 
-    if (_milestone.status != Status.DisputeCreated) {
+    if (_milestone.status != MilestoneStatus.DisputeCreated) {
       revert FundMe__MilestoneStatusNotCreated({projectId: dispute.projectId, milestoneId: dispute.milestoneId});
     }
 
@@ -307,7 +302,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     Milestone storage _milestone = _project.milestones[_milestoneId];
     uint256 arbitrationCost = constants.arbitrator.arbitrationCost(_milestone.arbitratorExtraData);
 
-    if (_milestone.status != Status.Claiming) {
+    if (_milestone.status != MilestoneStatus.Claiming) {
       revert FundMe__MilestoneStatusNotClaiming(_projectId, _milestoneId);
     }
 
@@ -359,7 +354,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     externalDisputeIdToLocalDisputeId[externalDisputeId] = localDisputeId;
     localDisputeIdCounter += 1;
-    _milestone.status = Status.DisputeCreated;
+    _milestone.status = MilestoneStatus.DisputeCreated;
 
     emit Dispute(
       constants.arbitrator,
@@ -431,7 +426,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
     if (_ruling == DisputeChoices.CreatorWins) {
       // maybe have to set timing.lastInteraction to 0 value so claim milestone can be called?
       _project.timing.lastInteraction = 0;
-      _milestone.status = Status.Claiming;
+      _milestone.status = MilestoneStatus.Claiming;
       claimMilestone(_dispute.projectId);
     } else if (_ruling == DisputeChoices.DonorWins) {
       refundDonors(_dispute.projectId, _localDisputeId);
@@ -456,7 +451,7 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
 
     _project.projectFunds.totalFunded -= _project.projectFunds.remainingFunds;
     _project.projectFunds.remainingFunds = 0;
-    _milestone.status = Status.Created;
+    _milestone.status = MilestoneStatus.Created;
   }
 
   /** @notice calculate the amountClaimable based on the REMAINING milestones left to claim and the project remainingFunds
@@ -531,20 +526,33 @@ contract FundMeCore is IFundMeCore, Ownable, ReentrancyGuard, ERC165 {
   /**** public getters ******************/
   /**************************************/
 
-  /** @notice fetch a project given a projectId
-   *  @param projectId ID of the project.
-   */
   function getProject(uint32 projectId) public view returns (Project memory _project) {
     _project = projects[projectId];
   }
 
-  /** @notice fetch a milestone given a projectId and milestoneId
-   *  @param projectId ID of the project.
-   *  @param milestoneId ID of the milestone.
-   *  @dev milestoneId is indexed starting at 0 for every project. That is milestoneId's are NOT unique between projects.
-   */
   function getProjectMilestone(uint32 projectId, uint16 milestoneId) public view returns (Milestone memory _milestone) {
     _milestone = projects[projectId].milestones[milestoneId];
+  }
+
+  function getProjectDonorDetails(
+    uint32 projectId,
+    address donor
+  ) public view returns (ProjectDonorDetails memory _donorDetails) {
+    _donorDetails = projectDonorDetails[projectId][donor];
+  }
+
+  function getAccountBalance(address account, address crowdfundToken) public view returns (uint256 _balance) {
+    _balance = accountBalance[account][crowdfundToken];
+  }
+
+  function getDispute(uint32 disputeId) public view returns (DisputeStruct memory _dispute) {
+    _dispute = disputes[disputeId];
+  }
+
+  function getExternalDisputeIdToLocalDisputeId(
+    uint256 externalDisputeId
+  ) public view returns (uint32 _localDisputeId) {
+    _localDisputeId = externalDisputeIdToLocalDisputeId[externalDisputeId];
   }
 
   /** @notice get evidenceGroupId for a given projectId, and milestoneId. this allows us to create a unique id for the evidence group.

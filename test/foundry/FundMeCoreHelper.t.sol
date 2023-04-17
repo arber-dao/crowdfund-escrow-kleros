@@ -21,6 +21,7 @@ abstract contract FundMeCoreHelper is Test {
   uint128 public constant CREATE_PROJECT_COST = 0.1e18;
   uint256 public constant ERC20_MOCK_TOTAL_SUPPLY = 100000e18;
   string public constant META_EVIDENCE_URI = "ipfs://metaEvidence.pdf";
+  string public constant EVIDENCE_URI = "ipfs://evidence.pdf";
 
   FundMeCore public fundMeCore;
   CentralizedArbitrator public centralizedArbitrator;

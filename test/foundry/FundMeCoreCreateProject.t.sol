@@ -155,7 +155,7 @@ contract FundMeCoreCreateProjectTest is Test, FundMeCoreHelper {
       );
       assertEq(fundMeCore.getProjectMilestone(projectId, i).arbitratorExtraData, arbitratorExtraData);
       assertEq(fundMeCore.getProjectMilestone(projectId, i).amountClaimable, 0);
-      if (fundMeCore.getProjectMilestone(projectId, 1).status != IFundMeCore.Status.Created) {
+      if (fundMeCore.getProjectMilestone(projectId, 1).status != IFundMeCore.MilestoneStatus.Created) {
         fail("Milestone status should be Created");
       }
     }

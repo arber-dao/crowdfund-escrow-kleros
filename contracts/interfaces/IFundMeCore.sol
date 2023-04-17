@@ -33,7 +33,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
    *  @param Resolved milestone is complete, any disputes are resolved, and the milestone funds have 
              been transfered into the balance of the creator
    */
-  enum Status {
+  enum MilestoneStatus {
     Created,
     Claiming,
     DisputeCreated,
@@ -61,7 +61,7 @@ interface IFundMeCore is IArbitrable, IEvidence, IFundMeErrors {
             crowdfundToken has a very large supply */;
     bytes arbitratorExtraData /* Additional info about the dispute. We use it to pass the ID of the dispute's subcourt (first 32 bytes),
                                 the minimum number of jurors required (next 32 bytes) and the ID of the specific dispute kit (last 32 bytes, choose 0 for default). */;
-    Status status; // the dispute status for a milestone. TODO IMPLEMENTATION QUESTION: 1! Should disputes occur at the milestone level
+    MilestoneStatus status; // the dispute status for a milestone. TODO IMPLEMENTATION QUESTION: 1! Should disputes occur at the milestone level
   }
 
   struct Timer {
